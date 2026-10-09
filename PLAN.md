@@ -8,7 +8,8 @@ Read `ENGINEERING_NOTES.md` first for the audit evidence behind every decision h
 **Option 1: engine only.** No LLM/agentic layer on this project.
 
 Rejected, deliberately: an agentic/eval layer on top of chess. The domain is saturated
-(7+ comparable repos, 7+ papers — `ENGINEERING_NOTES.md` section 13), no novelty is
+(7+ comparable repos, 7+ papers; the research is in `private/CAREER_NOTES.md`,
+which is not committed), no novelty is
 available, and the agentic surface is shallow (one domain, a handful of trivial tools, one
 loop). It would read as forced. An AI project will be built **separately**, in a domain that
 actually fits — most likely a production RAG pipeline with an eval harness and documented
@@ -160,94 +161,17 @@ depth-1 search could not see mate in one. Terminal detection now precedes the cu
 
 Total: roughly 4-5 working sessions, with the user's study running in parallel.
 
-## Resume output: 2 bullets, not 3
+## Resume, interview framing and the study list
 
-Honest accounting. Fix-plus-tests alone is worth **1** bullet. The full build above is worth
-**2**. Three would be padding.
+Moved out of this file on 2026-10-10 into `private/CAREER_NOTES.md`,
+`private/RESUME_BULLETS.md`, `private/INTERVIEW_QA.md` and `private/STUDY_PREREQS.md`, none
+of which are committed. How the work is presented to employers does not belong in a public
+repository that those employers will read; how the engine works does, and that is what
+`docs/` is for.
 
-### How to frame them
-
-Use the **Google XYZ formula**: *"Accomplished [X] as measured by [Y], by doing [Z]."*
-- **X** — the engineering result, not the activity.
-- **Y** — the number: scale, before-and-after, or frequency.
-- **Z** — the technical decision or work that produced it.
-
-The common failure is writing Z only ("implemented alpha-beta pruning with MVV-LVA"), which
-describes activity and is what the previous version of this resume did. Lead with the
-outcome and attach the number.
-
-Worked examples of the shape, from SWE resumes: *"Cut median page load from 3.1s to 1.8s by
-adding route-level code splitting and server-rendered product data."* / *"Reduced
-accessibility defects 67% by building tested form primitives and adding automated axe checks
-to CI."* Note the pattern: result first, number attached, method last, one sentence.
-
-### Draft bullets
-
-> **Chess Engine | Python**
-> - Raised engine strength by *E* Elo over a plain alpha-beta baseline, measured across *G*
->   self-play games, by adding MVV-LVA and killer-move ordering, an incrementally-hashed
->   transposition table, quiescence with SEE, and PVS — cutting nodes per move *P*% at fixed
->   depth
-> - Cut search time per move from *A*ms to *B*ms at depth *D* by profiling out redundant move
->   generation and replacing full-board Zobrist recomputation with incremental updates,
->   shipped as a UCI engine with a *T*-test regression suite in CI
-
-The first bullet is the strong one: strength gain is the outcome, Elo over N games is the
-measurement, the feature list is the method. Node reduction rides along as a secondary
-number rather than being the headline, because node count is an activity metric and Elo is a
-result metric.
-
-**Do not write "perft suite validating move generation"** — see the Phase 0 correction above.
-`python-chess` generates moves. If perft appears at all, it is as a throughput figure.
-
-**Hard rule:** every italicised placeholder is filled only from a committed script's output,
-and the README number must match. No repeat of the old "~50% / ~58% / 69.33%" inconsistency
-across resume, commit message and `ATTRIBUTION.md`. Several placeholders above
-(*E*, *G*, *P*, *A*, *B*) do not exist yet — they are Phase 1 and Phase 2 outputs.
-
-## Interview narrative
-
-**Correction, 2026-10-10.** An earlier version of this file said the narrative was "I
-inherited a broken open-source engine." **That is false and must not be used.** The audit
-established the opposite: the original at `38a8d68` scored 12/12 on tactics, found mate at
-every depth, and had all six piece-square tables correct. It worked. The breakage was
-introduced by the three agent-generated commits made in *this* repo
-(`50533e5`, `5d0b77b`, `4f146de`).
-
-The accurate history is: a working but naive alpha-beta engine, plus three standard
-optimisations added on top that regressed its strength from 12/12 to 5/12.
-
-**For the resume: do not narrate the history at all.** Resume bullets state outcomes, not
-archaeology. Describe the engine as built.
-
-**For an interview, if asked, the honest version is the stronger answer anyway:**
-
-> "I added three standard search optimisations — move ordering, a transposition table and
-> quiescence — and the engine got *weaker*. I built a perft suite and a tactical regression
-> suite to find out why, and traced it to a minimax-to-negamax conversion that had kept
-> absolute White-positive scores where negamax requires side-relative ones, so the engine
-> would not play checkmate as White. I rebuilt the search from a clean base with the tests in
-> place first, then measured each feature's contribution in Elo."
-
-That is a *better* story than "I wrote a chess engine," because it demonstrates measurement
-discipline, regression catching and root-cause analysis. Owning the regression is the point,
-not a liability — shipping an optimisation that silently loses strength is an extremely
-common real-world failure, and most candidates have no story about catching one.
-
-## Study list for the user (3-4 days, parallel to implementation)
-
-All covered by the Chess Programming Wiki.
-
-1. Minimax to alpha-beta to negamax, and **score conventions** — the bug that broke this
-   engine, so worth knowing cold.
-2. Why move ordering multiplies pruning; MVV-LVA, killer moves, history heuristic.
-3. Zobrist hashing, incremental XOR update, and why TT entries need
-   EXACT/LOWERBOUND/UPPERBOUND flags.
-4. Horizon effect, quiescence, stand-pat, SEE.
-5. PVS, null-move pruning, late move reductions.
-6. What `perft` does and does not validate (it tests a move generator; ours is
-   `python-chess`), and why invariant and differential tests are the real harness here.
-7. Elo: the logistic model and where confidence intervals come from.
+The engineering constraints that came out of those sections *do* stay here, because they
+constrain the code: every number needs a committed script that reproduces it, the README must
+agree with the script, and no benchmark is ever quoted from a single position.
 
 ## Ground rules
 

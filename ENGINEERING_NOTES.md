@@ -154,19 +154,20 @@ different figures for one measurement is itself an interview liability.
 - `ATTRIBUTION.md` is written in "we" and reads as machine-generated. It also asserts
   "textbook-correct flag classification", which section 2 disproves.
 
-## 6. Verdict on resume use, as of today
+## 6. Resume and market assessment — moved
 
-**Do not ship the current bullets.** They are accurate *descriptions of code that exists*,
-but the code is wrong, and the engine is measurably weaker than the version it was forked
-from. The failure mode is bad: the bullets name exactly the three things that are broken, so
-they invite precisely the questions that expose them. Anyone who clones the repo finds an
-engine that will not deliver checkmate. That is worse than omitting the project.
+The original section 6 ("Verdict on resume use") and sections 9, 10 and 13 (market research,
+sources, and the saturation check on chess + LLM work) are now in `private/CAREER_NOTES.md`,
+which is not committed. They were about how to present this work to employers and which
+project to build for career reasons, neither of which belongs in a public repository that
+those employers read.
 
-The project *type* is good. Classical search is a respected SDE signal — search, pruning,
-data structures, measurable performance — and it is not saturated the way a CRUD app is. It
-is a weak signal for "AI Engineer" in the current meaning of that title unless a learned
-component is added. The fix is not to abandon it. It is to make it true, then add one thing
-that is genuinely hard.
+What survives here is the part that is about the engineering: the project type is a
+legitimate SDE signal because it exercises search, pruning, data structures and measurable
+performance; it is a weak signal for "AI Engineer" in the current sense of that title without
+a learned component; and the conclusion was to make the engine true and measured rather than
+to abandon it. The decision not to add an LLM or agentic layer is recorded in `PLAN.md` and
+`CLAUDE.md`.
 
 ## 7. Roadmap
 
@@ -226,82 +227,13 @@ domain. The legitimate AI angle here is a learned evaluation or a learned policy
   or ordering change is accepted, because every bug in section 2.1 is the kind that a
   node-count benchmark will cheerfully report as an *improvement*.
 
-## 9. Market research, 2026-10-09 (for choosing the AI layer)
+## 9, 10, 13. Market research, sources, saturation check — moved
 
-Sources are listed in section 10.
+See the note under section 6. These are in `private/CAREER_NOTES.md`.
 
-**What the 2026 AI-engineer hiring market rewards.** Consistent across sources:
-- *Evals are the differentiator.* "Eval is the new system design." A production eval suite is
-  cited as among the highest-callback portfolio projects, and the common failure is being
-  unable to defend your own eval.
-- Agentic tool-use orchestration is the fastest-growing LLM hiring category, but agent
-  projects are only credible with **trajectory evaluation**: retry budgets, structured tool
-  errors, a real verifier, and pass-rate reliability numbers.
-- Production RAG ranks highest of all *if* it has hybrid retrieval (dense + BM25), a
-  reranker, and grounding metrics (faithfulness, recall@20) plus a documented failure
-  taxonomy. Chess is a poor RAG domain — there is no document corpus to ground against.
-- Non-negotiable packaging: README as product spec with an architecture diagram, a live
-  deployed URL (reviewers do not clone), named eval metrics with targets, and cost/latency
-  figures ($/1k tokens, p50/p95).
-- Explicitly warned against: many toy notebooks, and copied eval frameworks you cannot
-  defend.
-- For SDE specifically: numbers in every bullet; "designed, built, deployed" over
-  "contributed to"; evidence of real use; a tutorial clone is not persuasive unless
-  substantially extended.
-
-**Saturation check on the obvious chess + AI ideas.**
-- *Voice move input* ("move e4 to e5") is heavily saturated and shallow. Existing work
-  includes a published Chrome extension (Speak to Lichess), MLH Fellowship's ACE, several
-  GitHub repos, Hugging Face Spaces, and `wchess`, the official whisper.cpp browser demo.
-  Chess notation is a constrained grammar, so the "NLP" reduces to a regex over
-  speech-to-text output. **Do not make this the headline feature.**
-- *LLM chess coach* is saturated — at least two separate repos are literally named
-  `LLM-ChessCoach`, plus `chess_openings_teacher` and others.
-- *LLM-vs-engine play via tool calls* already exists: `LYZhelloworld/chess-llm`,
-  `carlini/chess-llm`, `AidanCooper/llm-chess`, `maxim-saplin/llm_chess`, and
-  `byjustinjones/agentchess` (round-robin tournaments against a calibrated engine ladder,
-  with MCP support).
-
-**The one angle where owning an engine is a real architectural advantage.** Chess-as-LLM-eval
-is an active research area, not a toy: ChessQA (arXiv 2510.23948), Chess-World-Model
-(arXiv 2605.30100), PGN2FEN-style state tracking (arXiv 2508.19851), SPIN-Bench
-(arXiv 2503.12349). The reason this matters here: the scarcest resource in LLM evaluation is
-**ground truth**, and chess supplies an oracle. A correct engine can verify legality, score
-every position in centipawns, and name the best move at a fixed depth — so it can grade an
-LLM's play objectively, which an LLM-judge cannot. That is a defensible reason for this repo
-to exist inside an AI project rather than being decoration.
-
-Caveat to stay honest about: the *idea* is not novel (see the repos above). Differentiation
-has to come from rigor — own engine as oracle, a real failure taxonomy, statistics with
-error bars, and a deployed dashboard — not from claiming to be first.
-
-**Deprioritised:** NNUE / learned eval / policy-net move ordering are genuine ML and good
-SDE signals, but they produce none of the keywords or skills that "AI Engineer" currently
-means, and the user has asked specifically for agentic/GenAI. Keep as optional later work.
-
-## 10. Sources
-
-- https://github.com/landedjobs/projects-to-land-an-ai-job
-- https://github.com/landedjobs/ai-engineer-portfolio-projects
-- https://dev.to/klement_gunndu/5-ai-portfolio-projects-that-actually-get-you-hired-in-2026-5bpl
-- https://www.dataquest.io/blog/ai-projects/
-- https://mirrorcv.com/resume-guide/software-engineer-faang
-- https://profileelevate.com/resources/guides/faang-resume-playbook/
-- https://arxiv.org/pdf/2510.23948 (ChessQA)
-- https://arxiv.org/abs/2605.30100 (Chess-World-Model)
-- https://arxiv.org/pdf/2508.19851 (state tracking with chess)
-- https://arxiv.org/pdf/2503.12349 (SPIN-Bench)
-- https://github.com/maxim-saplin/llm_chess
-- https://github.com/byjustinjones/agentchess
-- https://github.com/LYZhelloworld/chess-llm
-- https://github.com/AidanCooper/llm-chess
-- https://chrome.google.com/webstore/detail/speak-to-lichess/ldiiocggpmgljihlkgpngjlhnggpapig
-- https://github.com/MLH-Fellowship/ACE
-- https://whisper.ggerganov.com/wchess
-
-> **Direction not yet chosen.** Section 7 phases 0-1 (correctness + speed) are agreed and
-> unblocked. The AI layer on top is under discussion; do not start it without the user's
-> decision.
+The one technical conclusion that belongs here, and which section 12 already states: this
+engine is **not** an evaluation oracle. If ground-truth evaluation is ever needed, that is
+Stockfish's job.
 
 ## 11. Repo archaeology, 2026-10-09 — the breakage is traced and reversible
 
@@ -358,8 +290,9 @@ race. It is to demonstrate understanding of search: alpha-beta, move ordering, t
 tables, quiescence, profiling, and correctness testing. That is a legitimate SDE signal on
 its own, and it should be claimed as exactly that and nothing more.
 
-**Correction to section 9.** Section 9 proposed using this engine as the ground-truth oracle
-for an LLM evaluation harness. That is methodologically weak and should not be done: a
+**Correction to the market-research section** (now in `private/CAREER_NOTES.md`, see the note
+under section 6). It proposed using this engine as the ground-truth oracle for an LLM
+evaluation harness. That is methodologically weak and should not be done: a
 sub-1500 Python engine is not a credible authority on best-move or centipawn ground truth,
 and "why not Stockfish?" has no good answer. The defensible architecture is:
 - **Stockfish** = the oracle (centipawn scores, best move at fixed depth).
@@ -371,18 +304,3 @@ That keeps the engine honest and useful without overclaiming, and "I used Stockf
 strength mattered and my own engine where understanding mattered" is a strong interview
 answer because it demonstrates judgement.
 
-## 13. Saturation reality check for chess + LLM work
-
-Beyond the repos in section 9, the academic space is crowded: ChessQA (2510.23948),
-Chess-World-Model (2605.30100), ChessArena (2509.24239), LLM Chess (2512.01992), strategic
-reasoning post-training (2507.00726), tool-augmented commentary hallucination evaluation
-(2608.04240), SPIN-Bench (2503.12349). Prompt-representation ablations (FEN vs PGN vs ASCII,
-with and without a legal-move list) are **already published** — notably the finding that
-representation choice matters a lot for some models and barely at all for others.
-
-**Therefore: novelty is not available in this domain.** Any chess + LLM project here is a
-*competence demonstration*, not a research contribution, and must be pitched that way. The
-corollary is that the agentic engineering in chess is also fairly shallow — it is
-single-domain with a handful of trivial tools, so it exercises orchestration far less than a
-messy multi-tool or document-retrieval domain would. Weigh that against the cohesion and
-speed benefits before committing.

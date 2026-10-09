@@ -15,9 +15,9 @@ plan. Read both before proposing changes.
 ## Decisions already made — do not relitigate
 
 - **Engine only.** No LLM, agentic or RAG layer on this project. That was explored in depth
-  and rejected: the chess + LLM space is saturated (7+ comparable repos, 7+ papers, see
-  `ENGINEERING_NOTES.md` section 13), no novelty is available, and the agentic surface in
-  chess is shallow. The user explicitly rejected it as forced. An AI project will be built
+  and rejected: the chess + LLM space is saturated (7+ comparable repos, 7+ papers; the research is in
+  `private/CAREER_NOTES.md`, which is not committed), no novelty is available, and the
+  agentic surface in chess is shallow. The user explicitly rejected it as forced. An AI project will be built
   separately in a domain that fits.
 - **This engine is not an evaluation oracle.** If ground-truth evaluation is ever needed,
   that is Stockfish's job. See the correction in `ENGINEERING_NOTES.md` section 12.
