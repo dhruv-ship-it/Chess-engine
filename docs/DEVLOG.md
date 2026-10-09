@@ -931,3 +931,164 @@ check-evasion test used a rook on a8 and a king on g1 — which is not a check, 
 attacks neither the first rank nor the g-file. Both were caught by assertions placed *before*
 the interesting one (`assert move in board.legal_moves`, `assert board.is_check()`), which is
 the argument for writing those guard assertions even though they look redundant.
+
+---
+
+## Phase 1, step 4 — principal variation search and aspiration windows
+
+**Shipped** 2026-10-10
+
+### What
+
+PVS in both the main search and the root, plus aspiration windows around the previous
+iteration's score. Three configs: `pvs-pure` (ordering plus PVS and nothing else, which
+exists for the test rather than the benchmark), `pvs`, and `pvs-asp`.
+
+### PVS: ask a cheaper question first
+
+After good ordering, the first move at a node is usually the best one. PVS exploits that by
+searching the first move with the full window and every later move with a **zero-width
+window** `(alpha, alpha + 1)`:
+
+```python
+score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1)
+if alpha < score < beta:
+    self.pvs_researches += 1
+    score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
+```
+
+A zero-width window can only answer "is this better than alpha, yes or no?" — and that is
+much cheaper, because almost every node inside it finds a cutoff immediately. When the scout
+is *surprised* and the move does beat alpha, its answer is only a bound, so the move has to be
+re-searched with the full window to get a usable value.
+
+**That re-search is the entire correctness argument.** Drop it and you have a search that is
+faster and quietly wrong — the classic PVS bug. Which shapes the test: score equality alone
+would also be satisfied by a PVS whose re-search never *fires*, so the suite asserts score
+equality **and** `pvs_researches > 0`, which proves the surprise path is actually exercised.
+
+Verified: `pvs-pure` returns the frozen baseline's exact score on all 13 positions at depths
+1-3, on the cheap positions at depth 4, and specifically at depths 4, 5 and 6 on the one
+endgame where the transposition table's score reuse deviates.
+
+### PVS made the engine slower until it had a transposition table
+
+This is the result worth keeping. Measured at depth 4 over the 13-position set:
+
+| configuration | nodes | PVS's effect |
+|---|---:|---:|
+| ordering only | 53,854 | — |
+| ordering + PVS | 59,023 | **+9.6%** |
+| ordering + table | 49,492 | — |
+| ordering + table + PVS | 45,512 | **-8.0%** |
+| ordering + table + iterative deepening | 46,333 | — |
+| ordering + table + iterative deepening + PVS | 43,505 | **-6.1%** |
+
+Reproduce with `python -m bench.nodes --config pvs-pure --depth 4 --baseline bench/baselines/ordering-d4.json`.
+
+So PVS is a **9.6% regression on its own** and an 8.0% win once a table exists. The reason is
+exactly the mechanism above: when the scout is surprised, the re-search walks the same subtree
+a second time. Without a table that work is simply repeated. With one, the scout has already
+filled the table with bounds and best moves for that subtree, so the re-search mostly reads
+back what the scout established, and the second pass is nearly free.
+
+Which is a general point, not a chess one: PVS trades a cheap test plus an occasional repeat
+against one expensive search, and the trade is only profitable when repeating is cheap. The
+order the features were built in mattered — had PVS been attempted before the transposition
+table, the measurement would have said "PVS does not work" and the conclusion would have been
+wrong.
+
+### Aspiration windows measured as worthless here, and that is the honest answer
+
+Iterative deepening hands over the previous depth's score, and the next depth's score is
+usually close to it. So search `(prev - 50, prev + 50)` instead of `(-inf, +inf)`: a narrow
+window prunes much harder because cutoffs become easy to reach. If the true score falls
+outside, the search *fails*, returns only a bound, and the window has to be widened and the
+iteration repeated.
+
+Measured, `pvs-asp` against `pvs`:
+
+| depth | aggregate nodes | median per position | time |
+|---|---:|---:|---:|
+| 4 | +1.1% | -0.0% | +1.3% |
+| 5 | +0.2% | -0.0% | +1.8% |
+| 6 | -0.1% | -0.0% | -0.1% |
+
+Zero, within noise, at every depth measured. **So it stays off in the recommended
+configuration** and `pvs` rather than `pvs-asp` is the one to use.
+
+Why it does nothing here, which is more interesting than the number:
+
+* An aspiration window only opens from **depth 3 onwards** (depths 1 and 2 have scores far too
+  unstable to guess from), so a depth-6 search gets four aspirated iterations and a depth-4
+  search gets two. There is very little to win.
+* The window has to be **re-searched on a miss**, and a miss costs more than the narrow window
+  saved. On `wac-001` — a mate in 3 — aspiration drove the node count from 10,731 up to
+  12,870 at depth 4, because the score swings violently between iterations and the window
+  misses every time.
+* Mate scores are excluded entirely, since a ±50 window around an ordinary score can never
+  contain one. That removes the positions where iterative deepening was doing best.
+
+Aspiration windows are standard in real engines and they do work there — at depth 20 with
+dozens of iterations and scores that move by a few centipawns between them. The feature is
+sound; the *setting* is wrong. Keeping it implemented, tested and off is the right outcome,
+and being able to say which of your features did nothing and why is worth more than quietly
+leaving it enabled.
+
+### Testing a feature whose correctness lives in a re-search
+
+Two tests are worth describing because they generalise.
+
+`test_a_badly_wrong_window_still_produces_the_right_answer` feeds the aspiration logic a
+`previous` score that is 600 or 5,000 centipawns away from the truth, which *guarantees* the
+first search fails, and then requires the returned score to equal a full-window search's
+score and `aspiration_misses > 0`. If widening were missing, or only widened the side that
+did not fail, the result would be a bound rather than the true value. The general trick:
+to test an error-recovery path, force the error rather than hoping the corpus contains one.
+
+`test_a_root_fail_low_is_not_stored_as_exact` covers a bug this step introduced and the
+implementation then had to fix. The root used to store its result as EXACT unconditionally,
+which was correct while the root was always searched with a full window. Inside an aspiration
+window it is not: the root can fail low, meaning no move beat the window's alpha, and the
+score is then only an upper bound. Storing that as EXACT would poison the table with a value
+the *next iteration* trusts completely. The root now classifies its flag the same way an
+interior node does, and the test pins a window far above the true score to force the fail-low
+and assert the stored flag is UPPERBOUND — with a control asserting a full-window root is
+still stored as EXACT.
+
+### Measured
+
+`pvs` against `quiescence-see` at the same depth:
+
+| depth | nodes | aggregate | median | time | scores |
+|---|---:|---:|---:|---:|---|
+| 4 | 111,401 | -6.0% | -1.6% | -8.2% | 13/13 identical |
+| 5 | 621,103 | -7.4% | -3.7% | -9.6% | 13/13 identical |
+| 6 | 1,879,060 | -5.6% | -2.4% | -7.8% | 12/13 identical |
+
+The single difference at depth 6 is `rook-endgame`, which is the same position where the
+transposition table's score reuse already deviated in step 2. Checked rather than assumed:
+PVS with no table returns the frozen baseline's exact score on that position at depths 4, 5
+and 6, so the deviation is the table's and not PVS's.
+
+Cumulative, against the Phase 0 plain baseline at depth 4 (802,700 nodes, 69.27s):
+
+| | nodes | seconds | time vs `phase0` depth 4 |
+|---|---:|---:|---:|
+| `pvs`, depth 4 | 111,401 | 4.76 | **-93.1%** |
+| `pvs`, depth 5 | 621,103 | 19.37 | -72.0% |
+| `pvs`, depth 6 | 1,879,060 | 74.84 | +8.0% |
+
+### What went wrong
+
+**The root's EXACT flag was wrong as soon as aspiration existed**, as described above. It was
+not wrong before — the root really was always searched with a full window — which is a good
+example of a correct assumption quietly becoming false when a feature lands two steps later.
+Nothing flagged it; it was noticed while reasoning about what a failed root search returns,
+and only then written as a test.
+
+**The edit script failed halfway through.** The patch applying this step matched an anchor in
+`__init__` that had already shifted, so the first three edits applied and the rest did not,
+leaving the module in a half-patched state. It reported the failure clearly and the remaining
+edits were applied separately, but the lesson stands: a multi-step edit script that is not
+idempotent needs to say exactly which step failed, or recovery means guessing what landed.

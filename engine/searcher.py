@@ -47,8 +47,10 @@ implementation look like a regression:
   horizon-effect positions, never score equality.
 * `see_pruning` -- skips captures that static exchange evaluation says lose material. A
   heuristic filter on quiescence, so also not score-preserving.
-* `pvs` -- score-preserving provided the full-window re-search on a fail-high is present.
-  A missing re-search is exactly what a score change catches.
+* `pvs` -- score-preserving **provided the full-window re-search is present**. A missing
+  re-search is the classic PVS bug and is exactly what a fixed-depth score change catches.
+* `aspiration_window` -- score-preserving provided the search is widened and repeated when
+  the true score falls outside the guessed window.
 """
 
 from __future__ import annotations
@@ -69,6 +71,7 @@ from engine.see import is_losing_capture
 from engine.search import (
     INFINITY,
     MATE,
+    MATE_THRESHOLD,
     SearchResult,
     SearchStats,
     _is_drawn,
@@ -121,6 +124,14 @@ class SearchConfig:
     # when `quiescence` is set.
     see_pruning: bool = False
 
+    # Phase 1, step 4: search the first move with the full window and every later move with
+    # a zero-width window, re-searching any that unexpectedly beats alpha.
+    pvs: bool = False
+
+    # Start each iterative-deepening iteration with a narrow window around the previous
+    # iteration's score instead of (-inf, +inf). Only read when `iterative_deepening` is set.
+    aspiration_window: bool = False
+
     def with_(self, **changes) -> SearchConfig:
         """Return a copy with the given flags changed. Convenience for benchmarks."""
         return replace(self, **changes)
@@ -158,7 +169,38 @@ CONFIGS: dict[str, SearchConfig] = {
         quiescence=True,
         see_pruning=True,
     ),
+    # Phase 1 step 4. `pvs-pure` exists for the test rather than the benchmark: ordering plus
+    # PVS and nothing else is provably score-preserving, so it can be held to exact equality
+    # with the frozen baseline, which is the only way to catch a missing re-search cleanly.
+    "pvs-pure": SearchConfig(move_ordering=True, pvs=True),
+    "pvs": SearchConfig(
+        move_ordering=True,
+        transposition_table=True,
+        iterative_deepening=True,
+        quiescence=True,
+        see_pruning=True,
+        pvs=True,
+    ),
+    "pvs-asp": SearchConfig(
+        move_ordering=True,
+        transposition_table=True,
+        iterative_deepening=True,
+        quiescence=True,
+        see_pruning=True,
+        pvs=True,
+        aspiration_window=True,
+    ),
 }
+
+# Half-width of the first aspiration window, in centipawns. Roughly half a pawn: wide enough
+# that most iterations land inside it, narrow enough to prune hard. On a miss the window is
+# widened by this factor rather than jumping straight to infinity, so a near miss stays cheap.
+ASPIRATION_DELTA = 50
+ASPIRATION_WIDEN = 4
+
+# After this many failed attempts the window is abandoned for a full one. A guard, not a
+# tuning knob: without it a pathological position could keep failing and keep re-searching.
+ASPIRATION_MAX_ATTEMPTS = 4
 
 # Hard ceiling on how deep quiescence may recurse.
 #
@@ -215,6 +257,12 @@ class Searcher:
         self.max_quiescence_ply = 0
         self.quiescence_cap_hits = 0
         self.see_prunes = 0
+
+        # PVS and aspiration counters. A re-search is PVS paying for a wrong guess, and an
+        # aspiration miss is the window having been too narrow. Both are the cost side of
+        # those features, so they are reported rather than left invisible.
+        self.pvs_researches = 0
+        self.aspiration_misses = 0
 
     # -- internals ---------------------------------------------------------------------
 
@@ -296,15 +344,37 @@ class Searcher:
         # original alpha, so the score is only an upper bound) from an exact value.
         alpha_original = alpha
 
+        use_pvs = self.config.pvs
+
         best = -INFINITY
         best_move = None
-        for move in moves:
+        for index, move in enumerate(moves):
             if tt is not None:
                 self.zobrist.push(board, move)
             else:
                 board.push(move)
 
-            score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
+            if index == 0 or not use_pvs:
+                score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
+            else:
+                # Principal variation search. After good ordering the first move is usually
+                # the best one, so every later move is first asked a cheaper question: "is
+                # this better than alpha, yes or no?" A zero-width window
+                # `(alpha, alpha + 1)` answers exactly that and nothing else, and it is much
+                # cheaper because almost every node inside it cuts off immediately.
+                score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1)
+
+                if alpha < score < beta:
+                    # The scout was surprised: this move really does beat alpha, so the
+                    # zero-width result is only a bound and the true value has to be
+                    # obtained with the full window.
+                    #
+                    # **This re-search is what makes PVS score-preserving.** Dropping it
+                    # leaves a search that is faster and quietly wrong -- the classic PVS
+                    # bug, and the reason `pvs-pure` is held to exact score equality with
+                    # the frozen baseline in the tests.
+                    self.pvs_researches += 1
+                    score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
 
             if tt is not None:
                 self.zobrist.pop(board)
@@ -494,19 +564,77 @@ class Searcher:
             self.tt.new_search()
 
         if not self.config.iterative_deepening:
-            return self._search_root(board, depth)
+            return self._search_root(board, depth, -INFINITY, INFINITY)
 
         result = SearchResult(move=None, score=0, depth=0, stats=self.stats)
+        previous: int | None = None
         for current in range(1, depth + 1):
-            result = self._search_root(board, current)
+            result = self._search_with_aspiration(board, current, previous)
+            previous = result.score
             # A mate in our favour cannot be improved on by searching deeper, and continuing
             # would only find the same mate at a worse distance.
             if result.is_mate and result.score > 0:
                 break
         return result
 
-    def _search_root(self, board: chess.Board, depth: int) -> SearchResult:
-        """One fixed-depth search of the root.
+    def _search_with_aspiration(
+        self,
+        board: chess.Board,
+        depth: int,
+        previous: int | None,
+    ) -> SearchResult:
+        """One iteration, optionally inside a narrow window around the previous score.
+
+        Iterative deepening hands over the previous depth's score, and the next depth's score
+        is usually close to it. Searching `(prev - 50, prev + 50)` instead of `(-inf, +inf)`
+        prunes far harder, because a narrow window makes cutoffs easy to reach.
+
+        The bet can lose. If the true score falls outside the window the search *fails* and
+        returns only a bound, so the window has to be widened and the iteration repeated --
+        and that repeat is what keeps the feature score-preserving. Only the side that failed
+        is widened, because a fail-high says nothing about the lower bound.
+
+        Mate scores are excluded: they are enormous, so a window around an ordinary score can
+        never contain one, and a window around a mate score is meaningless. Depths 1 and 2
+        are excluded because their scores are too unstable to guess from.
+        """
+        full_window = (
+            not self.config.aspiration_window
+            or previous is None
+            or depth < 3
+            or abs(previous) >= MATE_THRESHOLD
+        )
+        if full_window:
+            return self._search_root(board, depth, -INFINITY, INFINITY)
+
+        delta = ASPIRATION_DELTA
+        alpha = previous - delta
+        beta = previous + delta
+
+        for _attempt in range(ASPIRATION_MAX_ATTEMPTS):
+            result = self._search_root(board, depth, alpha, beta)
+            if result.score <= alpha:
+                self.aspiration_misses += 1
+                delta *= ASPIRATION_WIDEN
+                alpha = previous - delta
+            elif result.score >= beta:
+                self.aspiration_misses += 1
+                delta *= ASPIRATION_WIDEN
+                beta = previous + delta
+            else:
+                return result
+
+        # Repeated failures mean the guess was simply wrong; stop paying for it.
+        return self._search_root(board, depth, -INFINITY, INFINITY)
+
+    def _search_root(
+        self,
+        board: chess.Board,
+        depth: int,
+        alpha: int,
+        beta: int,
+    ) -> SearchResult:
+        """One fixed-depth search of the root, inside the given window.
 
         The root is kept separate from `_negamax` because it must always return a *move*, so
         it never takes a transposition cutoff -- a cutoff returns a score and would leave the
@@ -519,6 +647,7 @@ class Searcher:
             score = -MATE if board.is_check() else 0
             return SearchResult(move=None, score=score, depth=depth, stats=self.stats)
 
+        window_alpha = alpha
         tt = self.tt
         tt_move = None
         key = 0
@@ -534,17 +663,23 @@ class Searcher:
             # single highest-value place to order.
             moves = order_moves(board, moves, self.killers, self.history, 0, tt_move)
 
-        alpha = -INFINITY
+        use_pvs = self.config.pvs
         best_move = moves[0]
         best_score = -INFINITY
 
-        for move in moves:
+        for index, move in enumerate(moves):
             if tt is not None:
                 self.zobrist.push(board, move)
             else:
                 board.push(move)
 
-            score = -self._negamax(board, depth - 1, -INFINITY, -alpha, 1)
+            if index == 0 or not use_pvs:
+                score = -self._negamax(board, depth - 1, -beta, -alpha, 1)
+            else:
+                score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, 1)
+                if alpha < score < beta:
+                    self.pvs_researches += 1
+                    score = -self._negamax(board, depth - 1, -beta, -alpha, 1)
 
             if tt is not None:
                 self.zobrist.pop(board)
@@ -558,8 +693,17 @@ class Searcher:
                 alpha = score
 
         if tt is not None:
-            # The root is searched with a full window, so its score is always exact.
-            tt.store(key, depth, best_score, EXACT, best_move, 0)
+            # Only an exact value may be stored as EXACT. Inside an aspiration window the
+            # root can fail low -- no move beat the window's alpha -- and the score is then
+            # only an upper bound. Storing that as EXACT would poison the table with a value
+            # the next iteration trusts completely.
+            if best_score <= window_alpha:
+                flag = UPPERBOUND
+            elif best_score >= beta:
+                flag = LOWERBOUND
+            else:
+                flag = EXACT
+            tt.store(key, depth, best_score, flag, best_move, 0)
 
         self.stats.depth_reached = depth
         return SearchResult(move=best_move, score=best_score, depth=depth, stats=self.stats)
@@ -582,5 +726,7 @@ class Searcher:
         self.max_quiescence_ply = 0
         self.quiescence_cap_hits = 0
         self.see_prunes = 0
+        self.pvs_researches = 0
+        self.aspiration_misses = 0
         if self.tt is not None:
             self.tt.clear()

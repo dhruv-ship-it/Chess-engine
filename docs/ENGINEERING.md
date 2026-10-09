@@ -32,7 +32,7 @@ that is Stockfish's job.
 **On perft.** The repo has a perft harness, and it does *not* validate move generation here,
 because `python-chess` owns move generation. It is kept as a throughput benchmark for the
 make/unmake path and as the tree-walk harness that validates incremental Zobrist hashing.
-Section 10 covers what the real correctness harness is.
+Section 11 covers what the real correctness harness is.
 
 ---
 
@@ -61,6 +61,7 @@ tests/
   test_transposition.py flag semantics, mate conversion, replacement, differentials
   test_see.py      hand-computed exchanges, X-rays, the king-recapture rule
   test_quiescence.py horizon effect, stand-pat, check evasions, the recursion cap
+  test_pvs.py      PVS score preservation, the re-search path, aspiration widening
   test_tactics.py  end-to-end tactical regression, run against every configuration
   test_bench.py    tests for the measurement harness itself
 ```
@@ -90,6 +91,9 @@ CONFIGS = {
     "id-only":      SearchConfig(move_ordering=True, iterative_deepening=True),
     "quiescence":     ...,   # tt-id plus quiescence
     "quiescence-see": ...,   # plus SEE capture pruning
+    "pvs-pure":       ...,   # ordering plus PVS only -- exists for the exactness test
+    "pvs":            ...,   # quiescence-see plus PVS; the recommended configuration
+    "pvs-asp":        ...,   # plus aspiration windows, which measured as worthless here
 }
 ```
 
@@ -537,7 +541,84 @@ on a named set, not a property.
 
 ---
 
-## 9. Measurement methodology
+## 9. Principal variation search and aspiration windows
+
+### PVS
+
+After good ordering the first move at a node is usually best. PVS searches the first move with
+the full window and every later move with a **zero-width window** `(alpha, alpha + 1)`, which
+can only answer "is this better than alpha, yes or no?" and is far cheaper because almost
+every node inside it cuts off at once. When the scout is surprised, its answer is only a
+bound, so the move is **re-searched with the full window**.
+
+That re-search is the whole correctness argument, and it shapes the test. Score equality alone
+would also be satisfied by a PVS whose re-search never *fires*, so the suite asserts score
+equality **and** `pvs_researches > 0`.
+
+### PVS was a regression until the transposition table existed
+
+Measured at depth 4 over the 13-position set:
+
+| configuration | nodes | PVS's effect |
+|---|---:|---:|
+| ordering only | 53,854 | — |
+| ordering + PVS | 59,023 | **+9.6%** |
+| ordering + table | 49,492 | — |
+| ordering + table + PVS | 45,512 | **-8.0%** |
+| ordering + table + iterative deepening | 46,333 | — |
+| + PVS | 43,505 | **-6.1%** |
+
+PVS trades one expensive search for a cheap test plus an occasional repeat, so it only pays
+when repeating is cheap. Without a table the re-search walks the subtree again from scratch;
+with one, the scout has already filled the table with bounds and best moves for that subtree,
+so the second pass mostly reads back what the first established.
+
+The build order therefore mattered: attempting PVS before the transposition table would have
+produced the measurement "PVS does not work", and the conclusion would have been wrong.
+
+### Aspiration windows: measured at zero, and left off
+
+`pvs-asp` against `pvs`:
+
+| depth | aggregate nodes | median per position | time |
+|---|---:|---:|---:|
+| 4 | +1.1% | -0.0% | +1.3% |
+| 5 | +0.2% | -0.0% | +1.8% |
+| 6 | -0.1% | -0.0% | -0.1% |
+
+Zero, within noise, at every depth measured, so the recommended configuration is `pvs`, not
+`pvs-asp`. Three reasons, all about the setting rather than the feature:
+
+* a window only opens from depth 3 onwards, so a depth-6 search gets four aspirated
+  iterations and a depth-4 search gets two;
+* a miss costs a re-search that exceeds what the narrow window saved — on `wac-001`, a mate
+  in 3 whose score swings violently between iterations, aspiration took the node count from
+  10,731 to 12,870 at depth 4;
+* mate scores are excluded, which removes exactly the positions where iterative deepening was
+  doing best.
+
+Aspiration windows are standard in real engines and do work at depth 20 with dozens of
+iterations and scores that move by a few centipawns. The feature is implemented, tested, and
+off. Being able to say which of your features did nothing, and why, is worth more than
+quietly leaving it enabled.
+
+### Measured
+
+`pvs` against `quiescence-see` at the same depth:
+
+| depth | nodes | aggregate | median | time | scores |
+|---|---:|---:|---:|---:|---|
+| 4 | 111,401 | -6.0% | -1.6% | -8.2% | 13/13 identical |
+| 5 | 621,103 | -7.4% | -3.7% | -9.6% | 13/13 identical |
+| 6 | 1,879,060 | -5.6% | -2.4% | -7.8% | 12/13 identical |
+
+The one difference at depth 6 is `rook-endgame`, the same position where the table's score
+reuse already deviated in section 6. Checked rather than assumed: PVS with no table returns
+the frozen baseline's exact score there at depths 4, 5 and 6, so the deviation is the table's.
+
+---
+
+## 10. Measurement methodology
 
 Two rules, both of them reactions to specific failures in the predecessor project rather
 than general good practice.
@@ -604,7 +685,7 @@ point estimate.
 
 ---
 
-## 10. Correctness strategy
+## 11. Correctness strategy
 
 The predecessor's three "optimisation" commits took its tactical score from 12/12 to 5/12,
 and a node-count benchmark reported the change as a 69% improvement — which it was. It
@@ -647,7 +728,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13 plus the perft references on eve
 
 ---
 
-## 11. Results
+## 12. Results
 
 Measured on Python 3.11.4, `python-chess` 1.11.2, Windows 11. Node counts are deterministic
 and reproduce anywhere; timings are machine-dependent.
@@ -662,7 +743,7 @@ python -m bench.nodes --config phase0 --depth 4
 
 | | result |
 |---|---|
-| tests | 644 passing |
+| tests | 808 passing |
 | tactical suite | 12/12 across depths 2-4, on every configuration |
 | perft references | 15/15 correct, ~660k nodes/sec aggregate |
 | incremental Zobrist | 7,037,881 nodes checked at depth 4, 0 inconsistent keys |
@@ -686,6 +767,8 @@ python -m bench.nodes --config <name> --depth 4 --baseline bench/baselines/phase
 | 2. + iterative deepening | `tt-id` | 46,333 | -94.2% | **-86.2%** | all 13 identical |
 | 3. + quiescence | `quiescence` | 208,119 | -74.1% | -66.6% | 8/13 changed, by design |
 | 3. + SEE pruning | `quiescence-see` | 118,509 | -85.2% | -75.6% | 8/13 changed, by design |
+| 4. + PVS | `pvs` | 111,401 | -86.1% | -77.2% | same as step 3 |
+| 4. + aspiration | `pvs-asp` | 112,573 | -86.0% | -76.8% | same as step 3 |
 
 Steps 1 and 2 reduce nodes; step 3 *increases* them against step 2 while making the search
 more accurate, which is why its row is still well below the Phase 0 baseline but above
@@ -710,9 +793,12 @@ metric while depth reached for a given cost is the result:
 | `ordering`, depth 5 | 679,433 | 55.02 | -20.6% |
 | `tt`, depth 5 | 508,297 | 43.74 | -36.9% |
 | `tt-id`, depth 5 | 386,507 | 33.47 | -51.7% |
-| `quiescence-see`, depth 4 | 118,509 | 5.18 | **-92.5%** |
+| `quiescence-see`, depth 4 | 118,509 | 5.18 | -92.5% |
 | `quiescence-see`, depth 5 | 670,564 | 21.43 | -69.1% |
 | `quiescence-see`, depth 6 | 1,991,205 | 81.20 | +17.2% |
+| `pvs`, depth 4 | 111,401 | 4.76 | **-93.1%** |
+| `pvs`, depth 5 | 621,103 | 19.37 | -72.0% |
+| `pvs`, depth 6 | 1,879,060 | 74.84 | +8.0% |
 
 Two readings of that table. A depth-4 search that *also* resolves every capture past the
 horizon now costs **7.5% of what the plain depth-4 search cost** — more accurate and 13 times

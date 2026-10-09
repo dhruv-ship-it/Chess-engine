@@ -37,8 +37,13 @@ Current measurements, all reproducible with the commands below:
   4 of 13 benchmark positions, and SEE removes 43% of its node cost with identical scores and
   best moves on all 13. The deepest quiescence recursion observed is 25 plies against a cap
   of 32, measured rather than assumed.
-- **A depth-4 search that also resolves every capture past the horizon now costs 7.5% of what
-  the plain depth-4 search cost** — more accurate and 13× faster. In roughly the plain
+- **PVS was a 9.6% regression on its own and an 8.0% win once the transposition table
+  existed** — it trades one expensive search for a cheap test plus an occasional repeat, and
+  that only pays when repeating is cheap. Measured both ways rather than assumed.
+- **Aspiration windows measured at zero** (−0.0% median at every depth tested), so they are
+  implemented, tested, and switched off. Which features did nothing is part of the result.
+- **A depth-4 search that also resolves every capture past the horizon now costs 6.9% of what
+  the plain depth-4 search cost** — more accurate and 15× faster. In roughly the plain
   baseline's depth-4 time budget, the engine now reaches depth 6 with quiescence.
 
 Nothing about **strength** is claimed yet, because strength has not been measured yet. Node
@@ -56,6 +61,7 @@ engine/ordering.py   MVV-LVA, killer moves, history heuristic
 engine/zobrist.py    incremental Zobrist hashing, O(1) per move, tree-walk validated
 engine/transposition.py  bounded table, EXACT/LOWERBOUND/UPPERBOUND, stores the best move
 engine/see.py        static exchange evaluation (swap algorithm) for capture pruning
+                     PVS and aspiration windows live in engine/searcher.py
 bench/positions.py   the 13-position benchmark set, validated at import
 bench/nodes.py       fixed-depth node/time benchmark, JSON baselines, comparison mode
 bench/perft.py       node-count reference suite and make/unmake throughput benchmark
@@ -107,7 +113,8 @@ python -m bench.nodes --config tt-id --depth 5 --baseline bench/baselines/orderi
 ```
 
 Configurations are `phase0`, `ordering`, `tt-move-only`, `tt`, `tt-id`, `id-only`,
-`quiescence` and `quiescence-see`. They
+`quiescence`, `quiescence-see`, `pvs-pure`, `pvs` and `pvs-asp`; `pvs` is the recommended
+one. They
 are finer-grained than the features on purpose: a transposition table bundles three separable
 claims -- the best-move hint, the score cutoff, and the iterative deepening that exploits the
 hint -- and they are worth very different amounts, so each is measured on its own.
@@ -116,7 +123,7 @@ hint -- and they are worth very different amounts, so each is measured on its ow
 import chess
 from engine.searcher import CONFIGS, Searcher
 
-searcher = Searcher(CONFIGS["quiescence-see"])
+searcher = Searcher(CONFIGS["pvs"])
 result = searcher.search(chess.Board(), depth=5)
 print(result.move, result.score, searcher.stats.nodes)
 ```
