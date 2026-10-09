@@ -8,6 +8,7 @@ it produces numbers that look authoritative.
 import json
 
 import chess
+import pytest
 
 from bench import nodes as nodes_bench
 from bench.positions import BENCH_POSITIONS, validate
@@ -118,3 +119,54 @@ def test_compare_refuses_mismatched_depths():
     baseline = json.loads(json.dumps(current))
     baseline["depth"] = 2
     assert nodes_bench.compare(current, baseline) == 2
+
+
+# -- the generated summary table --------------------------------------------------------
+
+def test_summary_matches_the_committed_baselines():
+    """The docs' results table is generated from the baselines, so the generator is tested.
+
+    The first version of that table was hand-copied from benchmark output and four of its
+    median figures were wrong. This asserts that what the generator reports still agrees with
+    the baseline JSON it reads, so the table and the data cannot drift apart.
+    """
+    from bench import summary
+
+    rows = summary.cumulative_rows(depth=4)
+    assert rows, "no baselines found at depth 4"
+
+    base = summary.load("phase0-d4.json")
+    for config, _label, row in rows:
+        current = summary.load(f"{config}-d4.json")
+        assert row["nodes"] == current["totals"]["nodes"]
+        expected = (
+            (current["totals"]["nodes"] - base["totals"]["nodes"])
+            / base["totals"]["nodes"] * 100
+        )
+        assert row["aggregate_pct"] == pytest.approx(expected)
+        assert row["position_count"] == len(base["positions"])
+        assert row["min_pct"] <= row["median_pct"] <= row["max_pct"]
+
+
+def test_summary_covers_every_phase1_config():
+    """A config added to the engine but left out of the summary would go unreported."""
+    from bench import summary
+    from engine.searcher import CONFIGS
+
+    reported = {config for config, _label in summary.PIPELINE}
+    # `phase0` is the baseline rather than a row; `pvs-pure` and `id-only` exist for tests
+    # and isolation experiments; `phase1` is an alias for `pvs`.
+    expected = set(CONFIGS) - {"phase0", "pvs-pure", "id-only", "phase1"}
+    assert reported == expected, (
+        f"summary.PIPELINE is out of step with CONFIGS: "
+        f"missing {expected - reported}, extra {reported - expected}"
+    )
+
+
+def test_summary_renders_without_crashing(capsys):
+    from bench import summary
+
+    summary.print_plain(4)
+    summary.print_markdown(4)
+    out = capsys.readouterr().out
+    assert "phase0" in out and "ordering" in out

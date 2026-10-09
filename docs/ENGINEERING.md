@@ -877,10 +877,10 @@ python -m bench.nodes --config <name> --depth 4 --baseline bench/baselines/phase
 | 2. + table, move only | `tt-move-only` | 53,862 | -93.3% | -82.1% | all 13 identical |
 | 2. + score cutoffs | `tt` | 49,492 | -93.8% | -84.0% | all 13 identical |
 | 2. + iterative deepening | `tt-id` | 46,333 | -94.2% | **-86.2%** | all 13 identical |
-| 3. + quiescence | `quiescence` | 208,119 | -74.1% | -66.6% | 8/13 changed, by design |
-| 3. + SEE pruning | `quiescence-see` | 118,509 | -85.2% | -75.6% | 8/13 changed, by design |
-| 4. + PVS | `pvs` | 111,401 | -86.1% | -77.2% | same as step 3 |
-| 4. + aspiration | `pvs-asp` | 112,573 | -86.0% | -76.8% | same as step 3 |
+| 3. + quiescence | `quiescence` | 208,119 | -74.1% | -70.5% | 8/13 changed, by design |
+| 3. + SEE pruning | `quiescence-see` | 118,509 | -85.2% | -74.9% | 8/13 changed, by design |
+| 4. + PVS | `pvs` | 111,401 | -86.1% | -76.1% | same as step 3 |
+| 4. + aspiration | `pvs-asp` | 112,573 | -86.0% | -76.2% | same as step 3 |
 
 Step 5 adds time management, which does not change a fixed-depth search at all; its result is
 the depth table in section 10.
@@ -888,6 +888,13 @@ the depth table in section 10.
 Steps 1 and 2 reduce nodes; step 3 *increases* them against step 2 while making the search
 more accurate, which is why its row is still well below the Phase 0 baseline but above
 `tt-id`. Section 8 has the attribution.
+
+**This table is generated, not typed.** `python -m bench.summary --markdown` emits these rows
+from the committed JSON baselines. That exists because the first version of this table was
+hand-copied from benchmark output and four of its median figures were wrong by between 0.6
+and 4 percentage points -- the same failure, in miniature, that the predecessor project made
+when it described one measurement as "~50%", "~58%" and "69.33%" in three places. A number
+that a human retypes is a number that can drift.
 
 Depth 4 understates the table badly, because there is very little tree in which to find a
 transposition. Section 7 has the depth-5 figures, which are the honest ones, and the
