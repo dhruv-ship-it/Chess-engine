@@ -1,0 +1,313 @@
+{
+  "config": "tt-move-only",
+  "depth": 5,
+  "positions": {
+    "startpos": {
+      "nodes": 21834,
+      "leaves": 18454,
+      "seconds": 1.7027909000171348,
+      "nodes_per_sec": 12822.478672971702,
+      "score": 70,
+      "move": "e2e4",
+      "tt": {
+        "size": 1048576,
+        "probes": 21835,
+        "hits": 846,
+        "hit_rate_pct": 3.9,
+        "collisions": 39,
+        "cutoffs": 0,
+        "stores": 3381,
+        "replacements": 846,
+        "declined": 0,
+        "fill_permille": 2
+      },
+      "category": "opening",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    },
+    "open-game": {
+      "nodes": 54001,
+      "leaves": 44901,
+      "seconds": 4.746131699997932,
+      "nodes_per_sec": 11377.89749914094,
+      "score": 150,
+      "move": "b1c3",
+      "tt": {
+        "size": 1048576,
+        "probes": 54002,
+        "hits": 1534,
+        "hit_rate_pct": 2.8,
+        "collisions": 226,
+        "cutoffs": 0,
+        "stores": 9092,
+        "replacements": 1537,
+        "declined": 5,
+        "fill_permille": 7
+      },
+      "category": "opening",
+      "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 4 3"
+    },
+    "italian": {
+      "nodes": 128603,
+      "leaves": 112935,
+      "seconds": 12.444611400016584,
+      "nodes_per_sec": 10334.03100074532,
+      "score": 175,
+      "move": "f3g5",
+      "tt": {
+        "size": 1048576,
+        "probes": 128604,
+        "hits": 2986,
+        "hit_rate_pct": 2.3,
+        "collisions": 886,
+        "cutoffs": 0,
+        "stores": 15645,
+        "replacements": 2992,
+        "declined": 14,
+        "fill_permille": 12
+      },
+      "category": "opening",
+      "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 6 5"
+    },
+    "sicilian-open": {
+      "nodes": 130148,
+      "leaves": 118666,
+      "seconds": 11.010768000007374,
+      "nodes_per_sec": 11820.065593963367,
+      "score": 230,
+      "move": "d1f3",
+      "tt": {
+        "size": 1048576,
+        "probes": 130149,
+        "hits": 2198,
+        "hit_rate_pct": 1.7,
+        "collisions": 848,
+        "cutoffs": 0,
+        "stores": 11471,
+        "replacements": 2222,
+        "declined": 11,
+        "fill_permille": 8
+      },
+      "category": "opening",
+      "fen": "rnbqkb1r/pp2pppp/3p1n2/8/3NP3/8/PPP2PPP/RNBQKB1R w KQkq - 0 5"
+    },
+    "kiwipete": {
+      "nodes": 83034,
+      "leaves": 74540,
+      "seconds": 8.91181510000024,
+      "nodes_per_sec": 9317.293847355268,
+      "score": 315,
+      "move": "d5e6",
+      "tt": {
+        "size": 1048576,
+        "probes": 83035,
+        "hits": 2651,
+        "hit_rate_pct": 3.2,
+        "collisions": 328,
+        "cutoffs": 0,
+        "stores": 8495,
+        "replacements": 2668,
+        "declined": 0,
+        "fill_permille": 5
+      },
+      "category": "middlegame",
+      "fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"
+    },
+    "perft-4": {
+      "nodes": 16780,
+      "leaves": 11796,
+      "seconds": 1.717456200014567,
+      "nodes_per_sec": 9770.263719015178,
+      "score": -250,
+      "move": "c4c5",
+      "tt": {
+        "size": 1048576,
+        "probes": 16781,
+        "hits": 1196,
+        "hit_rate_pct": 7.1,
+        "collisions": 17,
+        "cutoffs": 0,
+        "stores": 4806,
+        "replacements": 1199,
+        "declined": 3,
+        "fill_permille": 3
+      },
+      "category": "middlegame",
+      "fen": "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"
+    },
+    "perft-5": {
+      "nodes": 66485,
+      "leaves": 62548,
+      "seconds": 5.438692499999888,
+      "nodes_per_sec": 12224.445489426249,
+      "score": 565,
+      "move": "d7c8q",
+      "tt": {
+        "size": 1048576,
+        "probes": 66486,
+        "hits": 1493,
+        "hit_rate_pct": 2.2,
+        "collisions": 87,
+        "cutoffs": 0,
+        "stores": 3881,
+        "replacements": 1495,
+        "declined": 1,
+        "fill_permille": 2
+      },
+      "category": "middlegame",
+      "fen": "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8"
+    },
+    "wac-001": {
+      "nodes": 137010,
+      "leaves": 126616,
+      "seconds": 11.31345980000333,
+      "nodes_per_sec": 12110.353722206153,
+      "score": 999997,
+      "move": "g3g6",
+      "tt": {
+        "size": 1048576,
+        "probes": 137011,
+        "hits": 1823,
+        "hit_rate_pct": 1.3,
+        "collisions": 642,
+        "cutoffs": 0,
+        "stores": 9794,
+        "replacements": 1850,
+        "declined": 6,
+        "fill_permille": 7
+      },
+      "category": "tactical",
+      "fen": "2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - 0 1"
+    },
+    "wac-002": {
+      "nodes": 13923,
+      "leaves": 11643,
+      "seconds": 0.8948036000074353,
+      "nodes_per_sec": 15559.839052820427,
+      "score": 140,
+      "move": "f6e6",
+      "tt": {
+        "size": 1048576,
+        "probes": 13924,
+        "hits": 778,
+        "hit_rate_pct": 5.6,
+        "collisions": 28,
+        "cutoffs": 0,
+        "stores": 2280,
+        "replacements": 644,
+        "declined": 1,
+        "fill_permille": 1
+      },
+      "category": "tactical",
+      "fen": "8/7p/5k2/5p2/p1p2P2/Pr1pPK2/1P1R3P/8 b - - 0 1"
+    },
+    "hanging-queen": {
+      "nodes": 1398,
+      "leaves": 1197,
+      "seconds": 0.07261649999418296,
+      "nodes_per_sec": 19251.82293434672,
+      "score": 500,
+      "move": "d1d4",
+      "tt": {
+        "size": 1048576,
+        "probes": 1394,
+        "hits": 21,
+        "hit_rate_pct": 1.5,
+        "collisions": 0,
+        "cutoffs": 0,
+        "stores": 197,
+        "replacements": 21,
+        "declined": 0,
+        "fill_permille": 0
+      },
+      "category": "tactical",
+      "fen": "4k3/8/8/8/3q4/8/8/3RK3 w - - 0 1"
+    },
+    "perft-3-endgame": {
+      "nodes": 7852,
+      "leaves": 6580,
+      "seconds": 0.5171436999808066,
+      "nodes_per_sec": 15183.40066850166,
+      "score": 90,
+      "move": "b4f4",
+      "tt": {
+        "size": 1048576,
+        "probes": 7853,
+        "hits": 213,
+        "hit_rate_pct": 2.7,
+        "collisions": 2,
+        "cutoffs": 0,
+        "stores": 1272,
+        "replacements": 176,
+        "declined": 1,
+        "fill_permille": 1
+      },
+      "category": "endgame",
+      "fen": "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"
+    },
+    "kpk": {
+      "nodes": 824,
+      "leaves": 610,
+      "seconds": 0.04113989998586476,
+      "nodes_per_sec": 20029.217384658637,
+      "score": 120,
+      "move": "e1f2",
+      "tt": {
+        "size": 1048576,
+        "probes": 825,
+        "hits": 73,
+        "hit_rate_pct": 8.8,
+        "collisions": 0,
+        "cutoffs": 0,
+        "stores": 215,
+        "replacements": 69,
+        "declined": 0,
+        "fill_permille": 0
+      },
+      "category": "endgame",
+      "fen": "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1"
+    },
+    "rook-endgame": {
+      "nodes": 10561,
+      "leaves": 9381,
+      "seconds": 0.5492885999847203,
+      "nodes_per_sec": 19226.687028082826,
+      "score": 580,
+      "move": "e1d2",
+      "tt": {
+        "size": 1048576,
+        "probes": 10562,
+        "hits": 1112,
+        "hit_rate_pct": 10.5,
+        "collisions": 5,
+        "cutoffs": 0,
+        "stores": 1174,
+        "replacements": 347,
+        "declined": 3,
+        "fill_permille": 0
+      },
+      "category": "endgame",
+      "fen": "8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1"
+    }
+  },
+  "totals": {
+    "nodes": 672453,
+    "leaves": 599867,
+    "seconds": 59.36071790001006,
+    "nodes_per_sec": 11328.249114721135,
+    "tt": {
+      "probes": 672461,
+      "hits": 16924,
+      "hit_rate_pct": 2.5,
+      "cutoffs": 0,
+      "collisions": 3108,
+      "stores": 71703,
+      "declined": 45,
+      "max_fill_permille": 12
+    }
+  },
+  "environment": {
+    "python": "3.11.4",
+    "python_chess": "1.11.2",
+    "platform": "Windows-10-10.0.26200-SP0"
+  }
+}

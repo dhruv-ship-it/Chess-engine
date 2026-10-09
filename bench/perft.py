@@ -7,9 +7,10 @@ move generation come from `python-chess` -- so matching the published node count
 
 1. It is a clean, reproducible **throughput benchmark** (nodes/sec) for the make/unmake path
    that the search spends most of its time in.
-2. It is the natural tree-walking harness for validating the **incremental Zobrist hashing**
-   arriving in Phase 1, where every node asserts that the incrementally updated key equals a
-   from-scratch recomputation. That assertion does test code written here.
+2. It is the tree-walking harness that validates the **incremental Zobrist hashing**:
+   `--validate-zobrist` walks the same trees asserting at every node that the incrementally
+   updated key equals a from-scratch recomputation. That assertion does test code written
+   here, and it is the only part of this file that does.
 
 Do not describe this as validating move generation. See ENGINEERING_NOTES.md.
 
@@ -21,6 +22,8 @@ import argparse
 import time
 
 import chess
+
+from engine.zobrist import ZobristTracker
 
 # (name, fen, [perft(1), perft(2), ...]) using published reference counts.
 REFERENCE_POSITIONS = [
@@ -65,6 +68,49 @@ def perft(board: chess.Board, depth: int) -> int:
         nodes += perft(board, depth - 1)
         board.pop()
     return nodes
+
+
+def perft_zobrist(board: chess.Board, tracker: ZobristTracker, depth: int) -> tuple[int, int]:
+    """Walk the tree, checking the incremental Zobrist key at every node.
+
+    Returns (nodes visited, nodes whose key disagreed with a from-scratch recomputation).
+    Unlike `perft`, this one is testing *our* code: a wrong XOR for castling, en passant or
+    promotion shows up here and nowhere else. It does not short-circuit at depth 1 the way
+    `perft` does, because every node has to be checked, not counted.
+    """
+    nodes, bad = 1, 0
+    if not tracker.is_consistent(board):
+        return nodes, 1
+    if depth == 0:
+        return nodes, 0
+    for move in board.legal_moves:
+        tracker.push(board, move)
+        sub_nodes, sub_bad = perft_zobrist(board, tracker, depth - 1)
+        tracker.pop(board)
+        nodes += sub_nodes
+        bad += sub_bad
+    return nodes, bad
+
+
+def validate_zobrist(max_depth: int = 3, verbose: bool = True) -> list[dict]:
+    """Run the Zobrist consistency walk over every reference position."""
+    records = []
+    for name, fen, _expected in REFERENCE_POSITIONS:
+        board = chess.Board(fen)
+        tracker = ZobristTracker(board)
+        start = time.perf_counter()
+        nodes, bad = perft_zobrist(board, tracker, max_depth)
+        elapsed = time.perf_counter() - start
+        assert board.fen() == fen, f"{name}: the walk did not restore the board"
+        records.append(
+            {"position": name, "depth": max_depth, "nodes": nodes,
+             "inconsistent": bad, "seconds": elapsed}
+        )
+        if verbose:
+            status = "ok  " if bad == 0 else "FAIL"
+            print(f"{status} {name:12s} depth {max_depth}  {nodes:>10,} nodes checked  "
+                  f"{bad:>4} inconsistent  {elapsed:7.3f}s")
+    return records
 
 
 def perft_divide(board: chess.Board, depth: int) -> dict[str, int]:
@@ -114,7 +160,21 @@ def main() -> int:
     parser.add_argument("--depth", type=int, default=3, help="maximum depth (default 3)")
     parser.add_argument("--fen", type=str, help="run a single FEN instead of the suite")
     parser.add_argument("--divide", action="store_true", help="print per-move counts")
+    parser.add_argument(
+        "--validate-zobrist",
+        action="store_true",
+        help="walk the same trees checking the incremental Zobrist key at every node",
+    )
     args = parser.parse_args()
+
+    if args.validate_zobrist:
+        records = validate_zobrist(args.depth)
+        total_nodes = sum(r["nodes"] for r in records)
+        total_bad = sum(r["inconsistent"] for r in records)
+        total_time = sum(r["seconds"] for r in records)
+        print(f"\n{total_nodes:,} nodes checked in {total_time:.2f}s; "
+              f"{total_bad} inconsistent key(s)")
+        return 1 if total_bad else 0
 
     if args.fen:
         board = chess.Board(args.fen)

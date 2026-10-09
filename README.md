@@ -29,9 +29,13 @@ Current measurements, all reproducible with the commands below:
 - **Perft: 15/15** reference positions correct, ~660k nodes/sec aggregate on the make/unmake
   path.
 - **Move ordering: −82.1% median nodes per position** at depth 4 over a 13-position set
-  (−93.3% aggregate), with the score and best move unchanged on every position. A full extra
-  ply of search costs 21% *less* wall-clock time than the unordered baseline needed for the
-  shallower one.
+  (−93.3% aggregate), with the score and best move unchanged on every position.
+- **Transposition table: a further −24.0% median** at depth 5, rising to −32.3% with
+  iterative deepening. Incremental Zobrist hashing validated against from-scratch
+  recomputation at **7,037,881 nodes**, zero inconsistencies.
+- **A full extra ply of search now costs 52% less wall-clock time** than the plain baseline
+  needed for the shallower one (`tt-id` at depth 5: 33.5s, against `phase0` at depth 4:
+  69.3s).
 
 Nothing about **strength** is claimed yet, because strength has not been measured yet. Node
 count is an activity metric; Elo is the result metric, and that is Phase 2. At a fixed depth
@@ -45,6 +49,8 @@ engine/evaluate.py   material + piece-square tables, SIDE-RELATIVE score
 engine/search.py     FROZEN baseline: negamax + alpha-beta, mate-distance scoring
 engine/searcher.py   Phase 1 search; every feature behind a flag on a frozen SearchConfig
 engine/ordering.py   MVV-LVA, killer moves, history heuristic
+engine/zobrist.py    incremental Zobrist hashing, O(1) per move, tree-walk validated
+engine/transposition.py  bounded table, EXACT/LOWERBOUND/UPPERBOUND, stores the best move
 bench/positions.py   the 13-position benchmark set, validated at import
 bench/nodes.py       fixed-depth node/time benchmark, JSON baselines, comparison mode
 bench/perft.py       node-count reference suite and make/unmake throughput benchmark
@@ -87,17 +93,25 @@ python -m pytest                      # full test suite
 python -m bench.perft --depth 3       # node-count suite + throughput
 python -m bench.perft --fen "<FEN>" --depth 4 --divide
 
-# the search benchmark, and any configuration compared against the Phase 0 baseline
+# validate the incremental Zobrist key against a from-scratch recomputation at every node
+python -m bench.perft --validate-zobrist --depth 3
+
+# the search benchmark, and any configuration compared against a committed baseline
 python -m bench.nodes --config phase0 --depth 4
-python -m bench.nodes --config ordering --depth 4 --baseline bench/baselines/phase0-d4.json
+python -m bench.nodes --config tt-id --depth 5 --baseline bench/baselines/ordering-d5.json
 ```
+
+Configurations are `phase0`, `ordering`, `tt-move-only`, `tt`, `tt-id` and `id-only`. They
+are finer-grained than the features on purpose: a transposition table bundles three separable
+claims -- the best-move hint, the score cutoff, and the iterative deepening that exploits the
+hint -- and they are worth very different amounts, so each is measured on its own.
 
 ```python
 import chess
 from engine.searcher import CONFIGS, Searcher
 
-searcher = Searcher(CONFIGS["ordering"])
-result = searcher.search(chess.Board(), depth=4)
+searcher = Searcher(CONFIGS["tt-id"])
+result = searcher.search(chess.Board(), depth=5)
 print(result.move, result.score, searcher.stats.nodes)
 ```
 
@@ -148,9 +162,14 @@ rather than general good practice.
 
 And one classification, because applying a single rule to every feature would reject a
 correct implementation: move ordering and PVS **cannot** change the score at a fixed depth,
-a transposition table should not but is not guaranteed not to, and **quiescence changes
-scores by design** while *raising* node counts at the same nominal depth. Details in
-[docs/ENGINEERING.md](docs/ENGINEERING.md).
+a transposition table's *move hint* cannot but its *score cutoff* can, and **quiescence
+changes scores by design** while *raising* node counts at the same nominal depth.
+
+The transposition table's deviation was measured rather than assumed, and then traced: an
+entry is reused whenever `entry.depth >= depth`, so a node nominally searched to depth 2 can
+be answered by a value a depth-5 search produced. The `depth` field is a lower bound on the
+quality of the information, not a description of it. Details in
+[docs/ENGINEERING.md](docs/ENGINEERING.md) section 6.
 
 ## Documentation
 

@@ -32,6 +32,7 @@ deterministic and will.
 import argparse
 import json
 import platform
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -58,7 +59,7 @@ def run_position(fen: str, depth: int, config_name: str) -> dict:
     result = searcher.search(board, depth)
     elapsed = time.perf_counter() - start
 
-    return {
+    record = {
         "nodes": searcher.stats.nodes,
         "leaves": searcher.stats.leaves,
         "seconds": elapsed,
@@ -66,6 +67,11 @@ def run_position(fen: str, depth: int, config_name: str) -> dict:
         "score": result.score,
         "move": result.move.uci() if result.move else None,
     }
+    if searcher.tt is not None:
+        # Hit rate and cutoff count are how you tell a table that is wired up from one that
+        # is actually doing work. A table with near-zero hits is a bug, not a null result.
+        record["tt"] = searcher.tt.stats()
+    return record
 
 
 def run(depth: int, config_name: str, verbose: bool = True) -> dict:
@@ -90,6 +96,7 @@ def run(depth: int, config_name: str, verbose: bool = True) -> dict:
     total_nodes = sum(p["nodes"] for p in positions.values())
     total_leaves = sum(p["leaves"] for p in positions.values())
     total_seconds = sum(p["seconds"] for p in positions.values())
+    tt_records = [p["tt"] for p in positions.values() if "tt" in p]
 
     result = {
         "config": config_name,
@@ -108,10 +115,31 @@ def run(depth: int, config_name: str, verbose: bool = True) -> dict:
         },
     }
 
+    if tt_records:
+        probes = sum(r["probes"] for r in tt_records)
+        hits = sum(r["hits"] for r in tt_records)
+        result["totals"]["tt"] = {
+            "probes": probes,
+            "hits": hits,
+            "hit_rate_pct": round(hits / probes * 100, 1) if probes else 0.0,
+            "cutoffs": sum(r["cutoffs"] for r in tt_records),
+            "collisions": sum(r["collisions"] for r in tt_records),
+            "stores": sum(r["stores"] for r in tt_records),
+            "declined": sum(r["declined"] for r in tt_records),
+            "max_fill_permille": max(r["fill_permille"] for r in tt_records),
+        }
+
     if verbose:
         print(f"\nTOTAL  {total_nodes:,} nodes  {total_leaves:,} leaves  "
               f"{total_seconds:.2f}s  "
               f"{result['totals']['nodes_per_sec']:,.0f} nps")
+        tt_totals = result["totals"].get("tt")
+        if tt_totals:
+            print(f"TT     {tt_totals['probes']:,} probes  "
+                  f"{tt_totals['hits']:,} hits ({tt_totals['hit_rate_pct']}%)  "
+                  f"{tt_totals['cutoffs']:,} cutoffs  "
+                  f"{tt_totals['collisions']:,} key collisions  "
+                  f"max fill {tt_totals['max_fill_permille']}/1000")
 
     return result
 
@@ -133,6 +161,7 @@ def compare(current: dict, baseline: dict) -> int:
     print("-" * 70)
 
     changed = []
+    changes = []
     for name, base in baseline["positions"].items():
         cur = current["positions"].get(name)
         if cur is None:
@@ -142,6 +171,7 @@ def compare(current: dict, baseline: dict) -> int:
 
         delta = cur["nodes"] - base["nodes"]
         pct = (delta / base["nodes"] * 100) if base["nodes"] else 0.0
+        changes.append(pct)
         score_note = "same"
         if cur["score"] != base["score"]:
             score_note = f"CHANGED {base['score']} -> {cur['score']}"
@@ -157,6 +187,17 @@ def compare(current: dict, baseline: dict) -> int:
     pct = (cur_total - base_total) / base_total * 100 if base_total else 0.0
     print("-" * 70)
     print(f"{'TOTAL':18s} {cur_total:>12,} {base_total:>12,} {pct:>8.1f}%")
+
+    # The median matters more than the aggregate and is printed here rather than worked out
+    # by hand, so that the figure quoted in the README and the devlog comes out of a
+    # committed script. The aggregate is dominated by whichever position happens to be
+    # largest -- `kiwipete` alone is 44% of the Phase 0 baseline's node count -- so an
+    # optimisation that helps only that position can move the total by 40% while doing
+    # nothing for a typical position.
+    if changes:
+        median = statistics.median(changes)
+        print(f"{'median':18s} {'':>12s} {'':>12s} {median:>8.1f}%   "
+              f"(range {min(changes):.1f}% to {max(changes):.1f}%)")
 
     base_time = baseline["totals"]["seconds"]
     cur_time = current["totals"]["seconds"]

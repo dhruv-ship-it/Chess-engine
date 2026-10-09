@@ -33,3 +33,6 @@ jobs:
 
       - name: Verify perft reference counts
         run: python -m bench.perft --depth 3
+
+      - name: Validate incremental Zobrist against from-scratch recomputation
+        run: python -m bench.perft --validate-zobrist --depth 3

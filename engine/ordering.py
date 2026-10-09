@@ -45,12 +45,17 @@ import chess
 
 from engine.evaluate import PAWN, PIECE_VALUES
 
-# Priority bands. Every capture must outrank every killer, and every killer must outrank
-# every history-scored quiet move, so the bands are spaced far wider than any score that can
-# be produced inside them.
+# Priority bands. The transposition-table move must outrank every capture, every capture
+# must outrank every killer, and every killer must outrank every history-scored quiet move,
+# so the bands are spaced far wider than any score that can be produced inside them.
 #
 # A capture's score is CAPTURE_BASE + at most (900 + 900) * 16, about 29k, so captures
-# occupy [1_000_000, 1_029_000] and can never collide with the killer band.
+# occupy [1_000_000, 1_029_000] and can never reach the TT band or fall into the killer band.
+#
+# The TT move goes first because it is the best-informed guess available: it is the move that
+# was actually best when this position was searched before, which is strictly better evidence
+# than any static heuristic. See engine/transposition.py.
+TT_MOVE = 2_000_000
 CAPTURE_BASE = 1_000_000
 KILLER_PRIMARY = 900_000
 KILLER_SECONDARY = 890_000
@@ -212,8 +217,15 @@ def order_moves(
     killers: KillerTable,
     history: HistoryTable,
     ply: int,
+    tt_move: chess.Move | None = None,
 ) -> list[chess.Move]:
     """Return `moves` sorted best-guess-first.
+
+    `tt_move` is scored first when present. It is matched against the generated move list
+    rather than trusted, which is the defence against a hash collision: an entry from a
+    different position that happens to index to the same slot can carry a move that is
+    illegal here, and such a move simply never matches anything in `moves` and is ignored.
+    A transposition table must never be trusted to prove legality.
 
     A full sort, not a lazy selection sort. Most nodes cut off after one or two moves, so
     sorting all ~35 moves does strictly more work than necessary, and real engines stage
@@ -230,6 +242,8 @@ def order_moves(
     killer_2 = killers.secondary(ply)
 
     def key(move: chess.Move) -> int:
+        if move == tt_move:
+            return TT_MOVE
         gain = captured_value(board, move)
         if gain:
             return mvv_lva(board, move, gain)

@@ -433,3 +433,277 @@ threshold, so the condition never became false. Rewritten to drive an exact numb
 records and assert the halving directly. The lesson is small but general: a test that loops
 until a condition on the system under test is a test that can hang when the system behaves
 correctly.
+
+---
+
+## Phase 1, step 2 — transposition table with incremental Zobrist
+
+**Shipped** 2026-10-10
+
+### What
+
+[`engine/zobrist.py`](../engine/zobrist.py): Zobrist key tables and a tracker that maintains
+the key incrementally, O(1) per move, in lockstep with the board.
+
+[`engine/transposition.py`](../engine/transposition.py): a fixed-size table storing
+`(key, depth, score, flag, best_move, generation)`, with EXACT / LOWERBOUND / UPPERBOUND
+semantics, mate-score conversion, and depth-preferred replacement with ageing.
+
+Four new configs, because this step contains three separable claims and lumping them
+together would hide which one did the work: `tt-move-only` (table used only for its best
+move), `tt` (plus score cutoffs), `tt-id` (plus iterative deepening), and `id-only`
+(iterative deepening without a table, as a control).
+
+### Why XOR is the whole technique
+
+A Zobrist key is the XOR of one random 64-bit number per fact about the position: per
+(colour, piece type, square), per castling right, per en-passant file, plus one for the side
+to move. XOR is its own inverse — `x ^ r ^ r == x` — so making a move does not recompute
+anything. XOR the mover out of its origin, back in on its destination, XOR out any captured
+piece, flip the side-to-move key, fix up castling and en passant. **O(1) per move,
+independent of how many pieces are on the board**, against O(64) to rebuild.
+
+This is precisely the distinction the predecessor engine missed. It had a `compute_hash()`
+that walked all 64 squares and called it *fresh at every node*. That is a hash function, but
+not Zobrist hashing in the sense that matters: it cost more than the lookup it enabled
+saved. "I implemented Zobrist hashing" and "I recompute the hash from scratch at every node"
+cannot both be true of a correct implementation.
+
+### Proving the hashing is right — the one honest use of perft
+
+A wrong XOR does not crash. It produces a key that identifies the wrong position, so every
+subsequent probe reads another position's score and the search is quietly wrong. So the
+hashing is validated by brute force: `bench/perft.py --validate-zobrist` walks the move tree
+and asserts at **every node** that the incrementally maintained key equals a from-scratch
+recomputation.
+
+```
+python -m bench.perft --validate-zobrist --depth 4
+```
+
+| position | nodes checked | inconsistent |
+|---|---:|---:|
+| startpos | 206,604 | 0 |
+| kiwipete | 4,185,553 | 0 |
+| position-3 | 46,256 | 0 |
+| position-4 | 432,071 | 0 |
+| position-5 | 2,167,397 | 0 |
+| **total** | **7,037,881** | **0** |
+
+This is the only part of the perft harness that tests code written in this project. Matching
+published perft counts validates `python-chess`, which owns move generation here; asserting
+key consistency at every one of those nodes validates our hashing. CI runs the same check at
+depth 3 on every push.
+
+Three cases account for essentially every Zobrist bug, and a tree walk finds all of them
+without anyone having to think of them individually:
+
+1. **Castling moves two pieces.** Hashing only the king leaves the rook counted on its old
+   square. The rook's squares are derived from the king's rank and direction rather than
+   hardcoded, so one branch covers both colours.
+2. **En passant captures a pawn that is not on the destination square.** Looking the victim
+   up by destination square finds nothing, so an en-passant capture silently leaves the
+   captured pawn in the key forever. `is_en_passant` is only consulted when the destination
+   is empty, keeping it off the common path.
+3. **Promotion replaces one piece type with another.** What lands on the destination is not
+   what left the origin.
+
+One deliberate choice worth defending: castling rights and the en-passant file are XORed
+*out* before the push and the new values XORed *in* after it, reading both from the board.
+Working out by hand which rights a move revokes means reimplementing rules `python-chess`
+already gets right — a king move revokes both rights, and *a rook captured on its home
+square revokes its owner's right even though its owner did not move* — in exchange for
+nothing.
+
+### Why the en-passant key is gated on `has_legal_en_passant()`
+
+The key includes the en-passant file only when an en-passant capture is actually available,
+not merely when a pawn moved two squares. Otherwise two positions that are identical in every
+way that affects play — same pieces, same rights, same legal moves — would hash differently
+and the transposition between them would be missed. This is the standard convention; Polyglot
+does the same. It is nearly free because `has_legal_en_passant()` short-circuits on the
+common case of no en-passant square at all.
+
+### Why there must be exactly three flags
+
+A stored score is only as trustworthy as the window it was searched with, and alpha-beta does
+not compute an exact value at every node — when it cuts off, it has only established a bound.
+
+* **EXACT** — every move was examined and the score fell strictly inside `(alpha, beta)`.
+  The true value. Usable directly.
+* **LOWERBOUND** — a fail-high, i.e. a beta cutoff. The true value is *at least* this score
+  and may be higher. Usable only to prove the position is already good enough: cut off if the
+  stored score reaches the current `beta`.
+* **UPPERBOUND** — a fail-low, no move beat `alpha`. The true value is *at most* this score.
+  Usable only to prove it is already bad enough: cut off if the stored score is at most the
+  current `alpha`.
+
+Using a bound in the wrong direction is a classic bug and it is **silent** — the engine runs,
+returns legal moves, and is wrong sometimes. So the direction is asserted explicitly rather
+than inferred from the suite passing: `test_a_lowerbound_is_never_used_as_an_upperbound` and
+its mirror seed the table with a bound pointing the wrong way and require the search to
+*ignore* it and keep searching.
+
+### Mate scores have to be converted on the way in and out
+
+A mate score in this engine encodes its distance *from the root*: a mated node at ply `p`
+returns `-MATE + p`, so a mate found at ply 3 arrives at the root as `MATE - 3`. That number
+depends on the path length taken to the node.
+
+The same position can be reached at a different ply, at which point a raw stored score claims
+the wrong mate distance. So mate scores are stored **node-relative** — add `ply` to a winning
+score, subtract it from a losing one — and converted back on probe. Without this, a mate in 3
+can be reported as a mate in 7, and a won position can fail to convert because the search
+keeps seeing a different distance for the same mate.
+
+### Replacement: depth-preferred, with ageing
+
+The table is a fixed-size list indexed by `key & mask`, the size a power of two so the index
+is a mask rather than a modulo. The predecessor's table was an unbounded dictionary, which
+grows until memory runs out.
+
+Two positions can land in the same slot, so a slot is usable only if its stored key *matches*.
+That comparison is the only thing standing between a hash collision and a wrong answer — and
+it is why a stored move is still matched against the generated move list rather than trusted.
+A transposition table must never be trusted to prove legality. There is a test that seeds the
+table with a move that is illegal in the position and requires the search to ignore it.
+
+The policy is: store if the slot is empty, **or** the occupant is from an earlier search
+(stale), **or** the new entry was searched at least as deep. Depth-preferred because a deeper
+result is both more valuable and more expensive to reproduce; aged because without ageing a
+deep entry from three moves ago holds its slot forever against useful current results.
+
+### The score cutoff is not score-preserving, and this was measured rather than assumed
+
+Running the table against the frozen baseline produced a score difference: on
+`8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1` at depth 5, the table returned 590 where the plain search
+returns 580. By this project's own rules that is a bug signal, so it was investigated rather
+than waved away.
+
+The investigation: instrument every transposition cutoff, and check the returned score is a
+valid bound for a search at the depth the entry was stored with — EXACT must equal the true
+value, LOWERBOUND must not exceed it, UPPERBOUND must not be below it. Out of about 2,500
+unique cutoffs, 3 failed. All three were in the same sparse endgame, all at a stored depth of
+1, all off by a single piece-square step.
+
+The explanation, confirmed by checking the values against the true value at *every* depth:
+one of those entries was stored at depth 1 with the score 600, and 600 is that position's
+true value at depth **3**. An entry is reused whenever `entry.depth >= depth`, so a node
+nominally searched to depth 2 can be answered by a value a depth-5 search produced. **The
+`depth` field is a lower bound on the quality of the information, not a description of it.**
+A nominal depth-N search with a table therefore returns something *better* than the pure
+depth-N minimax value, which is the entire point of having a table.
+
+(The first attempt at this instrumentation reported 51 failures, and was wrong: it attributed
+a descendant's table entry to the parent node. Fixed by requiring that a cutoff at *this*
+node means `_negamax` returned having visited exactly one node.)
+
+So exact score equality is the wrong gate here. The gates are instead:
+
+* `tt-move-only` — the table used purely for its best move. That is pure ordering, so it
+  **cannot** change a score, and it is tested with exact equality against the frozen baseline
+  at depths 1-4. Having this flag exists for the test as much as for the measurement.
+* `id-only` — iterative deepening with no table just repeats searches and returns the last,
+  so it too is tested with exact equality.
+* `tt` — the deviation is bounded: the mate verdict must never flip, and a non-mate score
+  must stay within one pawn of the true value.
+* unit tests on the flag semantics, the mate conversion and the replacement policy.
+* the tactical suite, which now runs against all seven configurations automatically.
+
+### Measured
+
+```
+python -m bench.nodes --config tt-id --depth 5 --baseline bench/baselines/ordering-d5.json
+```
+
+Cumulative, at depth 4, against the Phase 0 plain baseline:
+
+| config | nodes | aggregate | median per position | scores vs baseline |
+|---|---:|---:|---:|---|
+| `phase0` | 802,700 | — | — | — |
+| `ordering` | 53,854 | -93.3% | -82.1% | 13/13 identical |
+| `tt-move-only` | 53,862 | -93.3% | -82.1% | 13/13 identical |
+| `tt` | 49,492 | -93.8% | -84.0% | 13/13 identical |
+| `tt-id` | 46,333 | -94.2% | -86.2% | 13/13 identical |
+
+Depth 4 badly understates the table, because at depth 4 there is very little tree to find
+transpositions in. Depth 5, measured against `ordering` at the same depth, is the honest
+picture:
+
+| config | nodes | aggregate | median per position | time |
+|---|---:|---:|---:|---:|
+| `ordering` | 679,433 | — | — | 55.02s |
+| `tt-move-only` | 672,453 | -1.0% | **-0.1%** | 59.36s |
+| `tt` | 508,297 | -25.2% | **-24.0%** | 43.74s |
+| `tt-id` | 386,507 | -43.1% | **-32.3%** | 33.47s |
+
+Scores at depth 5: `tt-move-only` 13/13 identical to `ordering`, as required. `tt` and
+`tt-id` 12/13, differing only on `rook-endgame` — the deviation analysed above.
+
+### Three findings worth stating plainly, one of which contradicts the usual advice
+
+**1. The best-move hint alone is worth nothing here: -0.1% median, and 7.9% *more* wall-clock
+time.** The received wisdom — which this project's own notes repeated — is that supplying a
+best move for ordering is the largest practical benefit of a transposition table. In a single
+fixed-depth search that is simply not what the measurement says. The reason is that in one
+search, the nodes that get a table hit are only the genuinely transposed ones, about 2.5% of
+probes at depth 5, and the existing MVV-LVA/killer/history ordering is already close to the
+alpha-beta square-root bound, so there is almost nothing left for a better first move to win.
+Meanwhile the key maintenance and the probe cost real time.
+
+The received wisdom is not wrong; it is about a different setting. It describes engines doing
+iterative deepening to much greater depth, where the previous iteration has left a best move
+at **every** node rather than only at transposed ones. Which is exactly what the next row
+shows.
+
+**2. The score cutoffs are where the gain is: -24.0% median nodes, -20.5% time.** And the gain
+grows with depth — -7.3% median at depth 4, -24.0% at depth 5 — because a deeper tree contains
+more transpositions and the stored entries are deep enough to be reusable.
+
+**3. Iterative deepening's measured gain at depth 5 is almost entirely one position.** The
+aggregate says -43.1% against `ordering`, and -24.0% against `tt`. But the median against `tt`
+is only **-1.1%**, and with `wac-001` excluded the aggregate against `tt` falls to -6.1% and
+the median to -0.2%.
+
+`wac-001` is a mate in 3. Iterative deepening finds it during the depth-3 iteration and stops,
+so it never runs the depth-4 and depth-5 iterations at all: 3,407 nodes against 137,072, a
+97.5% reduction. That is a real and legitimate feature — a proven mate cannot be improved by
+searching further — but it is **early termination on a mate score, not better ordering**, and
+reporting -43.1% without saying so would be attributing one mechanism's win to another.
+
+On a typical position, at depth 5, iterative deepening is roughly neutral in node count while
+costing nothing. That is the expected result, and it is not the reason to have it: iterative
+deepening exists so that a best move is available **at any moment**, which is what makes
+playing to a clock possible at all. Its payoff is measured in the time-management step, under
+a time budget, not here under a depth limit.
+
+### The headline: effective depth
+
+Node counts are an activity metric. The result metric is how deep the engine sees for a given
+cost:
+
+| | nodes | seconds |
+|---|---:|---:|
+| `phase0`, depth 4 | 802,700 | 69.27 |
+| `ordering`, depth 5 | 679,433 | 55.02 |
+| `tt`, depth 5 | 508,297 | 43.74 |
+| `tt-id`, depth 5 | 386,507 | 33.47 |
+
+**A full extra ply of search now costs 52% fewer nodes and 52% less wall-clock time than the
+plain baseline needed for the shallower search.** After step 1 that figure was 15% and 21%.
+
+### What went wrong
+
+Two things, both mine, both in the instrumentation rather than the engine.
+
+**The bound-validation harness was wrong before it was right.** Its first version reported 51
+invalid bounds and sent me hunting a flag inversion that did not exist. It detected "a cutoff
+happened in this subtree" and then compared the *parent's* search value against a
+*descendant's* table entry. The fix is to require that a cutoff at this node means `_negamax`
+returned having visited exactly one node. Lesson: an instrument that can attribute an
+observation to the wrong object is worse than no instrument, because it manufactures bugs.
+
+**The first attempt to monkey-patch `TranspositionTable.probe` failed** with
+`attribute 'probe' is read-only`, because the class uses `__slots__`. Subclassing works and
+is cleaner anyway. Minor, but it is the kind of thing that costs ten minutes if you have not
+seen it before.
