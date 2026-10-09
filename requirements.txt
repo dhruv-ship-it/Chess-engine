@@ -1,0 +1,2 @@
+python-chess>=1.11.0
+pytest>=8.0
