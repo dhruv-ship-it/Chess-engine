@@ -8,3 +8,6 @@ venv/
 .vscode/
 bench_results/
 *.log
+
+# Private career/interview material — never committed
+private/

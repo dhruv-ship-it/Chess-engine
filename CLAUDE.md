@@ -36,16 +36,47 @@ plan. Read both before proposing changes.
    figures and anything destined for the user's resume. The predecessor had the same
    measurement described as ~50%, ~58% and 69.33% in three different places.
 3. **Never benchmark on a single position.** Use a position set.
-4. **Phase 1 features must not change the score at fixed depth.** Move ordering, the
-   transposition table and quiescence are speed optimisations. If a score changes at a given
-   depth, that is a bug, and `test_alpha_beta_agrees_with_full_window_at_same_depth` plus the
-   tactical suite are the gates.
+4. **Know which features may change the score at fixed depth, and which may not.**
+   Corrected 2026-10-10; an earlier version of this rule said *all* Phase 1 features are
+   score-preserving, which is false for quiescence and would make a correct implementation
+   look like a bug.
+   - **Score-preserving — a score change is a bug:** move ordering (MVV-LVA, killers,
+     history), PVS and aspiration windows. Gate:
+     `test_alpha_beta_agrees_with_full_window_at_same_depth`, plus per-feature differential
+     tests asserting the same score and strictly fewer nodes.
+   - **Score-preserving in practice, not in theory:** the transposition table. Entries are
+     reused only when `entry.depth >= depth`, but bound-based cutoffs can cause search
+     instability. Treat a score change as a strong bug signal, then prove it either way.
+   - **Not score-preserving, by design:** quiescence (it resolves captures past the horizon,
+     so fixed-depth scores change and nominal-depth node counts *rise*), null-move pruning
+     and late move reductions. Their gates are the tactical suite and horizon-effect
+     positions, never score equality.
 5. Keep the Phase 0 plain search reachable, because Phase 2 measures Phase 1 against it.
+   `engine/search.py` is frozen as that control; Phase 1 lives in `engine/searcher.py`.
+6. **Elo is measured at fixed time or fixed node budget per move, never at fixed depth.** At
+   fixed depth a score-preserving optimisation plays identical moves and is worth 0 Elo by
+   construction. The gain only exists when saved time buys extra depth.
+
+## Working agreements — apply without being asked
+
+- **Commit as the user's GitHub id.** Local config is already
+  `user.name = dhruv-ship-it`, `user.email = irldhruv196@gmail.com`. Do not change it.
+- **Commit incrementally, one commit per completed step.** Run the tests and record the
+  measurement first; put the number in the commit message. Do not push unless asked.
+- **Document in the same commit as the code**, at four levels:
+  `docs/DEVLOG.md` (what/why/measured, per step), `docs/ENGINEERING.md` (technical
+  deep-dive for a hiring engineer), `docs/STORY.md` (portfolio narrative for a
+  non-specialist), and code comments carrying the *why*.
+- **`private/` is gitignored and must never be committed.** It holds interview prep, study
+  lists, follow-up questions, resume bullet drafts and job-market notes. Rule of thumb:
+  how the engine works goes in `docs/`; how to pitch it to employers goes in `private/`.
+- **The end deliverable is 1-2 short resume bullets** with quantifiers that each come from a
+  committed script. Drafts and their provenance live in `private/RESUME_BULLETS.md`.
 
 ## Current state
 
 Phase 0 is complete: 73 tests passing, tactical suite 12/12, perft 15/15 at ~660k nps.
-Phase 1 is next — see `PLAN.md`.
+Phase 1 is in progress — see `docs/DEVLOG.md` for where it stands and `PLAN.md` for order.
 
 ## About the user
 
