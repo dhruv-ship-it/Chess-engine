@@ -40,9 +40,13 @@ implementation look like a regression:
   semantics themselves.
 * `iterative_deepening` -- score-preserving at the top depth, and the feature that makes the
   transposition table worth most: each iteration seeds the next one's ordering.
-* `quiescence` -- **not** score-preserving, by design. It resolves captures past the horizon,
-  so fixed-depth scores change and node counts at the same nominal depth *rise*. Its gate is
-  the tactical suite, not score equality.
+* `quiescence` -- **not** score-preserving, by design, and the only Phase 1 feature that
+  makes the engine *stronger* at a fixed depth rather than merely cheaper. It resolves
+  captures past the horizon, so fixed-depth scores change -- because the old ones were wrong
+  -- and node counts at the same nominal depth *rise*. Its gate is the tactical suite and
+  horizon-effect positions, never score equality.
+* `see_pruning` -- skips captures that static exchange evaluation says lose material. A
+  heuristic filter on quiescence, so also not score-preserving.
 * `pvs` -- score-preserving provided the full-window re-search on a fail-high is present.
   A missing re-search is exactly what a score change catches.
 """
@@ -54,7 +58,14 @@ from dataclasses import dataclass, replace
 import chess
 
 from engine.evaluate import evaluate
-from engine.ordering import HistoryTable, KillerTable, captured_value, order_moves
+from engine.ordering import (
+    HistoryTable,
+    KillerTable,
+    captured_value,
+    order_captures,
+    order_moves,
+)
+from engine.see import is_losing_capture
 from engine.search import (
     INFINITY,
     MATE,
@@ -102,6 +113,14 @@ class SearchConfig:
     # Table size as a power of two. Only read when `transposition_table` is set.
     tt_size_bits: int = DEFAULT_SIZE_BITS
 
+    # Phase 1, step 3: at depth 0, keep searching captures until the position is quiet
+    # instead of evaluating a position where a recapture is pending.
+    quiescence: bool = False
+
+    # Skip captures that static exchange evaluation says lose material outright. Only read
+    # when `quiescence` is set.
+    see_pruning: bool = False
+
     def with_(self, **changes) -> SearchConfig:
         """Return a copy with the given flags changed. Convenience for benchmarks."""
         return replace(self, **changes)
@@ -125,7 +144,30 @@ CONFIGS: dict[str, SearchConfig] = {
         move_ordering=True, transposition_table=True, iterative_deepening=True
     ),
     "id-only": SearchConfig(move_ordering=True, iterative_deepening=True),
+    # Phase 1 step 3. Split again so SEE's contribution is attributable on its own.
+    "quiescence": SearchConfig(
+        move_ordering=True,
+        transposition_table=True,
+        iterative_deepening=True,
+        quiescence=True,
+    ),
+    "quiescence-see": SearchConfig(
+        move_ordering=True,
+        transposition_table=True,
+        iterative_deepening=True,
+        quiescence=True,
+        see_pruning=True,
+    ),
 }
+
+# Hard ceiling on how deep quiescence may recurse.
+#
+# Captures are self-limiting -- material runs out -- but *check evasions* are not: a sequence
+# of checks with no captures can in principle continue indefinitely, and quiescence does not
+# track repetition. The cap is the safety net. It is set far above anything a real position
+# reaches, and `Searcher.max_quiescence_ply` reports the deepest actually seen so that the
+# claim "it is never hit" is measured rather than assumed.
+MAX_QUIESCENCE_PLY = 32
 
 
 class Searcher:
@@ -162,6 +204,17 @@ class Searcher:
         self._tt_score_cutoffs = (
             self.config.transposition_table and self.config.tt_score_cutoffs
         )
+
+        # Quiescence counters. Kept on the Searcher rather than on SearchStats because
+        # SearchStats lives in the frozen Phase 0 module, which must not change.
+        #
+        # `quiescence_nodes` is reported deliberately: the predecessor engine counted nodes
+        # only at `depth == 0` in its main search, so its quiescence nodes -- the large
+        # majority of the work -- were excluded from every figure it published.
+        self.quiescence_nodes = 0
+        self.max_quiescence_ply = 0
+        self.quiescence_cap_hits = 0
+        self.see_prunes = 0
 
     # -- internals ---------------------------------------------------------------------
 
@@ -212,6 +265,13 @@ class Searcher:
                     ):
                         tt.cutoffs += 1
                         return score
+
+        if depth <= 0 and self.config.quiescence:
+            # Quiescence takes over entirely at the horizon, including terminal detection,
+            # so the full move generation below is skipped. That matters: when not in check
+            # quiescence only needs captures, and generating every legal move just to throw
+            # it away is the single most expensive mistake available here.
+            return self._quiescence(board, alpha, beta, ply, 0)
 
         # Terminal detection must precede the depth cutoff. A mated position has a definite
         # value regardless of remaining depth, so returning a static evaluation here would
@@ -274,6 +334,142 @@ class Searcher:
             else:
                 flag = EXACT
             tt.store(key, depth, best, flag, best_move, ply)
+
+        return best
+
+    def _quiescence(
+        self,
+        board: chess.Board,
+        alpha: int,
+        beta: int,
+        ply: int,
+        qply: int,
+    ) -> int:
+        """Search only forcing moves until the position is quiet, then evaluate.
+
+        **The problem.** A fixed-depth search stops at an arbitrary moment. If the last move
+        searched was "queen takes pawn", the static evaluation is applied to a position where
+        the opponent is about to recapture the queen, and records it as "up a pawn". That is
+        the *horizon effect*, and it makes fixed-depth evaluations wrong in exactly the
+        positions where accuracy matters.
+
+        **The fix.** At the horizon, keep searching -- but only captures (and every move when
+        in check) -- until nothing forcing is left and the static evaluation means something.
+        The recursion terminates because captures are self-limiting: material runs out.
+
+        This is why quiescence is *not* a speed optimisation. It visits strictly more nodes
+        at the same nominal depth, and it returns different scores, because the scores it
+        replaces were wrong.
+        """
+        self.stats.nodes += 1
+        self.quiescence_nodes += 1
+        if qply > self.max_quiescence_ply:
+            self.max_quiescence_ply = qply
+
+        if _is_drawn(board):
+            return 0
+
+        in_check = board.is_check()
+
+        if in_check and qply < MAX_QUIESCENCE_PLY:
+            # **No stand-pat when in check.** Standing pat means "I could choose to stop
+            # here", and in check that choice does not exist -- the position must be
+            # resolved. Worse, the static evaluation has no idea the king is about to be
+            # mated, so using it as a floor would report a lost position as fine.
+            #
+            # For the same reason every legal move is searched, not just captures: the escape
+            # may be a king step or an interposition.
+            moves = list(board.legal_moves)
+            if not moves:
+                return -MATE + ply
+            if self.config.move_ordering:
+                moves = order_moves(board, moves, self.killers, self.history, ply)
+
+            best = -INFINITY
+            for move in moves:
+                if self.tt is not None:
+                    self.zobrist.push(board, move)
+                else:
+                    board.push(move)
+                score = -self._quiescence(board, -beta, -alpha, ply + 1, qply + 1)
+                if self.tt is not None:
+                    self.zobrist.pop(board)
+                else:
+                    board.pop()
+
+                if score > best:
+                    best = score
+                if best > alpha:
+                    alpha = best
+                if alpha >= beta:
+                    break
+            return best
+
+        # **Stand-pat.** Capturing is optional, so the side to move can always decline and
+        # accept the position as it stands. The static evaluation is therefore a *floor*, not
+        # the answer: only captures that might improve on it are worth searching. Omitting
+        # this forces the side to move to capture, which loses material and is a classic way
+        # to get a quiescence search that makes the engine weaker.
+        self.stats.leaves += 1
+        best = evaluate(board)
+        if best >= beta:
+            return best
+        if best > alpha:
+            alpha = best
+
+        if qply >= MAX_QUIESCENCE_PLY:
+            self.quiescence_cap_hits += 1
+            return best
+
+        # Note that stalemate is not detected here. Finding it would cost a full legal-move
+        # generation at every quiescence node to catch a rare case, so a stalemate reached at
+        # the horizon is scored by the static evaluation instead of as a draw. This is the
+        # standard trade and it is stated rather than hidden.
+        moves = list(board.generate_legal_captures())
+
+        # Quiet promotions are forcing and swing roughly eight pawns, so leaving them out
+        # would be a hole in exactly the kind of position quiescence exists for. The
+        # bitboard test first makes the extra generation free in the overwhelming majority
+        # of positions, where no pawn is one step from promoting.
+        promotion_rank = chess.BB_RANK_7 if board.turn == chess.WHITE else chess.BB_RANK_2
+        if board.pawns & board.occupied_co[board.turn] & promotion_rank:
+            back_ranks = chess.BB_RANK_1 | chess.BB_RANK_8
+            for move in board.generate_legal_moves(board.pawns, back_ranks):
+                # Capturing promotions are already in `moves`; under-promotions are left out
+                # because they almost never matter and each one doubles this branch's cost.
+                if move.promotion == chess.QUEEN and not board.is_capture(move):
+                    moves.append(move)
+
+        if not moves:
+            return best
+
+        moves = order_captures(board, moves)
+
+        for move in moves:
+            if self.config.see_pruning and is_losing_capture(board, move):
+                # Static exchange evaluation says this exchange loses material outright, so
+                # searching it costs a whole subtree to discover what arithmetic already
+                # knows. This is a heuristic filter, not a proof, which is why it is a
+                # separate flag and separately measured.
+                self.see_prunes += 1
+                continue
+
+            if self.tt is not None:
+                self.zobrist.push(board, move)
+            else:
+                board.push(move)
+            score = -self._quiescence(board, -beta, -alpha, ply + 1, qply + 1)
+            if self.tt is not None:
+                self.zobrist.pop(board)
+            else:
+                board.pop()
+
+            if score > best:
+                best = score
+            if best > alpha:
+                alpha = best
+            if alpha >= beta:
+                break
 
         return best
 
@@ -382,5 +578,9 @@ class Searcher:
         self.reset_stats()
         self.killers.clear()
         self.history.clear()
+        self.quiescence_nodes = 0
+        self.max_quiescence_ply = 0
+        self.quiescence_cap_hits = 0
+        self.see_prunes = 0
         if self.tt is not None:
             self.tt.clear()

@@ -108,9 +108,9 @@ def test_en_passant_for_black_too():
 
 
 def test_promotion_replaces_the_piece_type():
-    board = chess.Board("4k3/3P4/8/8/8/8/8/4K3 w - - 0 1")
+    board = chess.Board("5k2/3P4/8/8/8/8/8/4K3 w - - 0 1")
     for promo in ("q", "r", "b", "n"):
-        board = chess.Board("4k3/3P4/8/8/8/8/8/4K3 w - - 0 1")
+        board = chess.Board("5k2/3P4/8/8/8/8/8/4K3 w - - 0 1")
         tracker = ZobristTracker(board)
         tracker.push(board, chess.Move.from_uci(f"d7d8{promo}"))
         assert tracker.is_consistent(board), f"promotion to {promo} hashed wrongly"

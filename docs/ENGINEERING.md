@@ -32,7 +32,7 @@ that is Stockfish's job.
 **On perft.** The repo has a perft harness, and it does *not* validate move generation here,
 because `python-chess` owns move generation. It is kept as a throughput benchmark for the
 make/unmake path and as the tree-walk harness that validates incremental Zobrist hashing.
-Section 9 covers what the real correctness harness is.
+Section 10 covers what the real correctness harness is.
 
 ---
 
@@ -46,6 +46,7 @@ engine/
   ordering.py      MVV-LVA, killer moves, history heuristic
   zobrist.py       incremental Zobrist hashing, O(1) per move
   transposition.py bounded table with EXACT/LOWERBOUND/UPPERBOUND and best-move storage
+  see.py           static exchange evaluation (the swap algorithm), for capture pruning
 bench/
   positions.py     the 13-position benchmark set, validated at import
   nodes.py         fixed-depth node/time benchmark, JSON baselines, comparison mode
@@ -58,6 +59,8 @@ tests/
   test_ordering.py unit and differential tests for move ordering
   test_zobrist.py  tree-walk validation of the incremental key against recomputation
   test_transposition.py flag semantics, mate conversion, replacement, differentials
+  test_see.py      hand-computed exchanges, X-rays, the king-recapture rule
+  test_quiescence.py horizon effect, stand-pat, check evasions, the recursion cap
   test_tactics.py  end-to-end tactical regression, run against every configuration
   test_bench.py    tests for the measurement harness itself
 ```
@@ -85,6 +88,8 @@ CONFIGS = {
     "tt-id":        SearchConfig(move_ordering=True, transposition_table=True,
                                  iterative_deepening=True),
     "id-only":      SearchConfig(move_ordering=True, iterative_deepening=True),
+    "quiescence":     ...,   # tt-id plus quiescence
+    "quiescence-see": ...,   # plus SEE capture pruning
 }
 ```
 
@@ -406,7 +411,133 @@ time budget, in the time-management step.
 
 ---
 
-## 8. Measurement methodology
+## 8. Quiescence and static exchange evaluation
+
+This is the first feature that is **not** a speed optimisation. It changes the answer, visits
+more nodes, and makes the engine stronger. Reporting it as a node-count change would be
+reporting the cost and calling it the result.
+
+### The horizon effect
+
+A fixed-depth search stops at an arbitrary moment. If the last move searched was "queen takes
+pawn", the static evaluation is applied to a position where the opponent is about to recapture
+the queen, and records it as "up a pawn".
+
+Demonstrated rather than claimed, on `4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1` at depth 1, where
+Qxd5 is met by cxd5 exactly one ply past the horizon:
+
+| config | best move | score |
+|---|---|---|
+| `tt-id` | **Qxd5** | 815 — "I won a pawn" |
+| `quiescence-see` | Kf2 | 715 — "that loses the queen" |
+
+The suite asserts both halves, so the test cannot pass vacuously if the position ever stops
+being a trap.
+
+### Stand-pat
+
+Inside quiescence, capturing is **optional** — the side to move can decline and accept the
+position as it stands. The static evaluation is therefore a *floor*, not the answer:
+
+```python
+best = evaluate(board)
+if best >= beta:
+    return best
+if best > alpha:
+    alpha = best
+```
+
+Omit it and the side to move is *forced* to capture, which loses material on purpose. There is
+a test: in a position where every available capture loses material, quiescence must return
+exactly `evaluate(board)`.
+
+### In check: no stand-pat, and all moves rather than captures
+
+Standing pat means "I could choose to stop here", and in check that choice does not exist.
+Worse, the static evaluation cannot see that the king is about to be mated, so using it as a
+floor would report a lost position as fine.
+
+And the escape may not be a capture. On `6k1/8/8/8/8/6P1/5P1P/r5K1 w - - 0 1` White is checked
+along the first rank, cannot capture the rook, and has one legal move: the quiet king step
+Kg2. A capture-only quiescence would find no moves and conclude White is mated.
+
+### The recursion cap
+
+Captures are self-limiting — material runs out. **Check evasions are not**: a chain of checks
+with no captures can in principle continue indefinitely, and quiescence does not track
+repetition. Hence a hard cap of 32 plies.
+
+A cap that silently fired would be a quality problem, so it is measured rather than trusted:
+the searcher records the deepest quiescence ply reached and how often the cap fires, and a
+test asserts zero cap hits across the benchmark set. The deepest ply reached anywhere is
+**25 of 32** (`kiwipete`, unpruned; 18 with SEE), and the cap never fires.
+
+### Two stated omissions
+
+**Stalemate is not detected in quiescence** — finding it would cost a full legal-move
+generation at every quiescence node to catch a rare case, so a stalemate at the horizon is
+scored statically. **Under-promotions are not searched**, though quiet *queen* promotions are,
+gated behind a bitboard test for a pawn on the seventh so it costs nothing in the common case.
+
+### SEE: the swap algorithm
+
+Quiescence looks at every capture and most captures are bad; searching a losing one costs a
+whole subtree to learn what arithmetic already knows. SEE answers statically: what is the net
+material outcome if both sides keep recapturing with their cheapest piece?
+
+```
+gains[d] = value of the piece now on the square - gains[d-1]      # the exchange runs on
+...
+gains[d-1] = -max(-gains[d-1], gains[d])                          # fold back
+```
+
+The fold is the part worth understanding. The first list assumes the exchange runs to
+completion, but either side may **stop** at any point. The fold is a negamax over "stand here"
+versus "capture again", which is why SEE returns the value of optimal play in the exchange
+rather than of exhausting it.
+
+Two things it must get right:
+
+* **X-rays.** A capturing piece vacates its square, which can expose a rook or bishop behind
+  it. So the attacker set is recomputed against a *modified occupancy mask* rather than the
+  real board — `python-chess` exposes `attackers_mask(color, square, occupied)`, so SEE never
+  makes or unmakes a move and is genuinely static.
+* **The king cannot capture into check.** Enforced, not simplified away, because ignoring it
+  is *not* conservative — it would let the king recapture illegally and report a losing
+  exchange as safe. The test has a control that removes the defender, so it cannot pass by the
+  king simply never being considered.
+
+Two simplifications are conservative and so acceptable: pins are ignored (a pinned defender is
+still counted, so SEE over-counts defenders and under-estimates some winning captures — it
+loses a little search rather than pruning a good move), and promotions during the exchange are
+ignored.
+
+### Measured
+
+Depth 4, against `tt-id` at the same depth:
+
+| config | nodes | aggregate | median | time | scores changed | best move changed |
+|---|---:|---:|---:|---:|---:|---:|
+| `tt-id` | 46,333 | — | — | 3.97s | — | — |
+| `quiescence` | 208,119 | +349.2% | +168.1% | 8.85s | 8/13 | 4/13 |
+| `quiescence-see` | 118,509 | +155.8% | +81.4% | 5.18s | 8/13 | 4/13 |
+
+Nodes going **up** is correct here, and the suite asserts it in that direction: a quiescence
+that searched *less* would not be resolving the captures it exists to resolve.
+
+The useful column is the last one. Quiescence changed the chosen move on 4 of 13 positions,
+which are positions where the engine was previously making a horizon error. That is a count of
+decisions changed, not a strength measurement — strength needs games, which is Phase 2.
+
+SEE's own contribution, against unpruned quiescence: **-43.1% nodes, -41.4% time, 13/13
+identical best moves and 13/13 identical scores.** That clean a result should not be
+over-read: SEE is a heuristic filter, not a score-preserving transformation, and because it
+ignores pins it is wrong in a conservative direction some of the time. 13/13 is a measurement
+on a named set, not a property.
+
+---
+
+## 9. Measurement methodology
 
 Two rules, both of them reactions to specific failures in the predecessor project rather
 than general good practice.
@@ -473,7 +604,7 @@ point estimate.
 
 ---
 
-## 9. Correctness strategy
+## 10. Correctness strategy
 
 The predecessor's three "optimisation" commits took its tactical score from 12/12 to 5/12,
 and a node-count benchmark reported the change as a 69% improvement — which it was. It
@@ -516,7 +647,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13 plus the perft references on eve
 
 ---
 
-## 10. Results
+## 11. Results
 
 Measured on Python 3.11.4, `python-chess` 1.11.2, Windows 11. Node counts are deterministic
 and reproduce anywhere; timings are machine-dependent.
@@ -531,7 +662,7 @@ python -m bench.nodes --config phase0 --depth 4
 
 | | result |
 |---|---|
-| tests | 547 passing |
+| tests | 644 passing |
 | tactical suite | 12/12 across depths 2-4, on every configuration |
 | perft references | 15/15 correct, ~660k nodes/sec aggregate |
 | incremental Zobrist | 7,037,881 nodes checked at depth 4, 0 inconsistent keys |
@@ -553,6 +684,12 @@ python -m bench.nodes --config <name> --depth 4 --baseline bench/baselines/phase
 | 2. + table, move only | `tt-move-only` | 53,862 | -93.3% | -82.1% | all 13 identical |
 | 2. + score cutoffs | `tt` | 49,492 | -93.8% | -84.0% | all 13 identical |
 | 2. + iterative deepening | `tt-id` | 46,333 | -94.2% | **-86.2%** | all 13 identical |
+| 3. + quiescence | `quiescence` | 208,119 | -74.1% | -66.6% | 8/13 changed, by design |
+| 3. + SEE pruning | `quiescence-see` | 118,509 | -85.2% | -75.6% | 8/13 changed, by design |
+
+Steps 1 and 2 reduce nodes; step 3 *increases* them against step 2 while making the search
+more accurate, which is why its row is still well below the Phase 0 baseline but above
+`tt-id`. Section 8 has the attribution.
 
 Depth 4 understates the table badly, because there is very little tree in which to find a
 transposition. Section 7 has the depth-5 figures, which are the honest ones, and the
@@ -567,16 +704,26 @@ middlegame where MVV-LVA has the most to work with).
 **Effective depth** is the number that actually matters, because node count is an activity
 metric while depth reached for a given cost is the result:
 
-| | nodes | seconds |
-|---|---:|---:|
-| `phase0`, depth 4 | 802,700 | 69.27 |
-| `ordering`, depth 5 | 679,433 | 55.02 |
-| `tt`, depth 5 | 508,297 | 43.74 |
-| `tt-id`, depth 5 | 386,507 | 33.47 |
+| | nodes | seconds | time vs `phase0` depth 4 |
+|---|---:|---:|---:|
+| `phase0`, depth 4 | 802,700 | 69.27 | — |
+| `ordering`, depth 5 | 679,433 | 55.02 | -20.6% |
+| `tt`, depth 5 | 508,297 | 43.74 | -36.9% |
+| `tt-id`, depth 5 | 386,507 | 33.47 | -51.7% |
+| `quiescence-see`, depth 4 | 118,509 | 5.18 | **-92.5%** |
+| `quiescence-see`, depth 5 | 670,564 | 21.43 | -69.1% |
+| `quiescence-see`, depth 6 | 1,991,205 | 81.20 | +17.2% |
 
-A full extra ply of search now costs **52% fewer nodes and 52% less wall-clock time** than
-the plain baseline needed for the shallower search. After step 1 that figure was 15% and
-21%.
+Two readings of that table. A depth-4 search that *also* resolves every capture past the
+horizon now costs **7.5% of what the plain depth-4 search cost** — more accurate and 13 times
+faster. And within roughly the same wall clock as the original depth-4 search, the engine
+reaches **depth 6 with quiescence**: two plies deeper with the horizon effect fixed.
+
+Note also that nodes per second rose from 11,588 to 23,000-31,000. Quiescence nodes are
+individually much cheaper — capture-only generation, MVV-LVA ordering alone, and many return
+immediately on stand-pat. Which is a reminder that nps is a property of the *mix* of node
+types, not a measure of engine quality: an engine can raise its nps by doing cheaper and less
+useful work.
 
 Per-step reasoning, including the per-category breakdown and a check of the result against
 the alpha-beta square-root bound, is in [DEVLOG.md](DEVLOG.md).

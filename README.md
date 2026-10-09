@@ -33,9 +33,13 @@ Current measurements, all reproducible with the commands below:
 - **Transposition table: a further −24.0% median** at depth 5, rising to −32.3% with
   iterative deepening. Incremental Zobrist hashing validated against from-scratch
   recomputation at **7,037,881 nodes**, zero inconsistencies.
-- **A full extra ply of search now costs 52% less wall-clock time** than the plain baseline
-  needed for the shallower one (`tt-id` at depth 5: 33.5s, against `phase0` at depth 4:
-  69.3s).
+- **Quiescence with SEE pruning** fixes the horizon effect: it changed the chosen move on
+  4 of 13 benchmark positions, and SEE removes 43% of its node cost with identical scores and
+  best moves on all 13. The deepest quiescence recursion observed is 25 plies against a cap
+  of 32, measured rather than assumed.
+- **A depth-4 search that also resolves every capture past the horizon now costs 7.5% of what
+  the plain depth-4 search cost** — more accurate and 13× faster. In roughly the plain
+  baseline's depth-4 time budget, the engine now reaches depth 6 with quiescence.
 
 Nothing about **strength** is claimed yet, because strength has not been measured yet. Node
 count is an activity metric; Elo is the result metric, and that is Phase 2. At a fixed depth
@@ -51,6 +55,7 @@ engine/searcher.py   Phase 1 search; every feature behind a flag on a frozen Sea
 engine/ordering.py   MVV-LVA, killer moves, history heuristic
 engine/zobrist.py    incremental Zobrist hashing, O(1) per move, tree-walk validated
 engine/transposition.py  bounded table, EXACT/LOWERBOUND/UPPERBOUND, stores the best move
+engine/see.py        static exchange evaluation (swap algorithm) for capture pruning
 bench/positions.py   the 13-position benchmark set, validated at import
 bench/nodes.py       fixed-depth node/time benchmark, JSON baselines, comparison mode
 bench/perft.py       node-count reference suite and make/unmake throughput benchmark
@@ -101,7 +106,8 @@ python -m bench.nodes --config phase0 --depth 4
 python -m bench.nodes --config tt-id --depth 5 --baseline bench/baselines/ordering-d5.json
 ```
 
-Configurations are `phase0`, `ordering`, `tt-move-only`, `tt`, `tt-id` and `id-only`. They
+Configurations are `phase0`, `ordering`, `tt-move-only`, `tt`, `tt-id`, `id-only`,
+`quiescence` and `quiescence-see`. They
 are finer-grained than the features on purpose: a transposition table bundles three separable
 claims -- the best-move hint, the score cutoff, and the iterative deepening that exploits the
 hint -- and they are worth very different amounts, so each is measured on its own.
@@ -110,7 +116,7 @@ hint -- and they are worth very different amounts, so each is measured on its ow
 import chess
 from engine.searcher import CONFIGS, Searcher
 
-searcher = Searcher(CONFIGS["tt-id"])
+searcher = Searcher(CONFIGS["quiescence-see"])
 result = searcher.search(chess.Board(), depth=5)
 print(result.move, result.score, searcher.stats.nodes)
 ```

@@ -211,6 +211,20 @@ class HistoryTable:
         return self._table[self._index(color, move)]
 
 
+def order_captures(board: chess.Board, moves: list[chess.Move]) -> list[chess.Move]:
+    """Order captures and promotions for quiescence, by MVV-LVA alone.
+
+    Separate from `order_moves` because quiescence has no quiet moves to order, so the killer
+    and history lookups would be pure overhead at every one of its nodes -- and quiescence
+    nodes outnumber main-search nodes several times over once it is switched on.
+    """
+    return sorted(
+        moves,
+        key=lambda move: mvv_lva(board, move, captured_value(board, move)),
+        reverse=True,
+    )
+
+
 def order_moves(
     board: chess.Board,
     moves: list[chess.Move],

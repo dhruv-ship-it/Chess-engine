@@ -77,7 +77,7 @@ def test_captured_value_of_en_passant():
 
 def test_captured_value_of_a_quiet_promotion():
     """A pawn is consumed and a queen appears, so the net gain is queen minus pawn."""
-    board = chess.Board("4k3/3P4/8/8/8/8/8/4K3 w - - 0 1")
+    board = chess.Board("5k2/3P4/8/8/8/8/8/4K3 w - - 0 1")
     move = chess.Move.from_uci("d7d8q")
     expected = PIECE_VALUES[chess.QUEEN] - PIECE_VALUES[chess.PAWN]
     assert captured_value(board, move) == expected

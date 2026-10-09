@@ -707,3 +707,227 @@ observation to the wrong object is worse than no instrument, because it manufact
 `attribute 'probe' is read-only`, because the class uses `__slots__`. Subclassing works and
 is cleaner anyway. Minor, but it is the kind of thing that costs ten minutes if you have not
 seen it before.
+
+---
+
+## Phase 1, step 3 — quiescence search with SEE
+
+**Shipped** 2026-10-10
+
+### What
+
+Quiescence search in [`engine/searcher.py`](../engine/searcher.py) — stand-pat, capture
+generation, quiet queen promotions, full check evasions, and a recursion cap — plus static
+exchange evaluation in [`engine/see.py`](../engine/see.py) as a pruning filter. Configs
+`quiescence` and `quiescence-see`, the second adding SEE so its contribution is separable.
+
+### This is the first feature that is not a speed optimisation
+
+Every Phase 1 step so far made a given depth cheaper while leaving the answer alone. This one
+is the opposite: it **changes the answer, visits more nodes, and makes the engine stronger**.
+Reporting it as a node-count change would be reporting the cost and calling it the result.
+
+**The problem.** A fixed-depth search stops at an arbitrary moment. If the last move searched
+was "queen takes pawn", the static evaluation is applied to a position where the opponent is
+about to recapture the queen, and records it as "up a pawn". That is the *horizon effect*.
+
+**The demonstration**, which is a test rather than a claim. On
+`4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1` at depth 1, where Qxd5 is met by cxd5 exactly one ply
+past the horizon:
+
+| config | best move | score |
+|---|---|---|
+| `tt-id` | **d1d5** (Qxd5) | 815 — "I won a pawn" |
+| `quiescence-see` | e1f2 | 715 — "that loses the queen" |
+
+The suite asserts *both* halves: that the engine without quiescence really does grab the pawn,
+and that the engine with it does not. Asserting only the second would pass vacuously if the
+position stopped being a horizon trap.
+
+### Stand-pat is the part that is easy to get wrong
+
+Inside quiescence, capturing is **optional** — the side to move can always decline and accept
+the position as it stands. So the static evaluation is a *floor*, not the answer:
+
+```python
+best = evaluate(board)
+if best >= beta:
+    return best          # already too good; the opponent avoids this line
+if best > alpha:
+    alpha = best
+```
+
+Omit it and the side to move is *forced* to capture, which loses material on purpose. That is
+one of the standard ways to add quiescence and make an engine weaker, so there is a test for
+it: in a position where every available capture loses material, quiescence must return exactly
+`evaluate(board)`.
+
+### No stand-pat when in check, and all moves rather than captures
+
+Two separate reasons, both worth stating because they are easy to conflate.
+
+Standing pat means "I could choose to stop here", and **in check that choice does not exist**
+— the position has to be resolved. Worse, the static evaluation has no idea the king is about
+to be mated, so using it as a floor would report a lost position as fine.
+
+And the escape may not be a capture. On `6k1/8/8/8/8/6P1/5P1P/r5K1 w - - 0 1` White is checked
+along the first rank, cannot capture the rook, and has exactly one legal move: the quiet king
+step Kg2. A quiescence that generated only captures would find no moves at all and conclude
+White is mated. So when in check, every legal move is searched.
+
+### The recursion cap, and why it is measured
+
+Captures are self-limiting — material runs out — so a capture-only quiescence terminates.
+**Check evasions are not.** A sequence of checks with no captures can in principle continue
+indefinitely, and quiescence does not track repetition, so there is a hard cap of 32 plies.
+
+A cap that silently fires would be a quality problem: the engine would return a static
+evaluation while in check, which is precisely the thing quiescence exists to prevent. So the
+searcher records the deepest quiescence ply it actually reaches and how often the cap fires,
+and there is a test asserting zero cap hits across the benchmark set. Measured: the deepest
+quiescence ply reached anywhere is **25 of 32**, on `kiwipete`, and the cap never fires. With
+SEE enabled that falls to 18.
+
+### Two deliberate omissions, stated rather than hidden
+
+**Stalemate is not detected in quiescence.** Finding it would cost a full legal-move
+generation at every quiescence node to catch a rare case, so a stalemate reached at the
+horizon is scored by the static evaluation instead of as a draw. Standard trade.
+
+**Under-promotions are not searched.** Quiet *queen* promotions are, because a quiet promotion
+swings about eight pawns and leaving it out would be a hole in exactly the positions
+quiescence exists for — and `generate_legal_captures()` does not include non-capturing
+promotions. The extra generation is gated behind a bitboard test for a pawn on the seventh,
+so it is free in the overwhelming majority of positions.
+
+### SEE: the swap algorithm, and the two things it must get right
+
+Quiescence looks at every capture, and most captures are bad. Searching a losing one costs a
+whole subtree to discover what arithmetic already knows. SEE answers, statically, "what is the
+net material outcome if both sides keep recapturing on this square with their cheapest
+piece?"
+
+The swap algorithm builds the gain list as the exchange proceeds and then folds it back:
+
+```
+gains[d] = value of the piece now on the square - gains[d-1]
+...
+gains[d-1] = -max(-gains[d-1], gains[d])
+```
+
+That second pass is the part worth understanding. The first list assumes the exchange runs to
+completion, but **either side may stop at any point** — capturing is a choice. The fold is a
+negamax over "stand here" versus "capture again", which is why SEE returns the value of
+optimal play in the exchange rather than of exhausting it.
+
+Two details it has to get right:
+
+**X-rays.** When a piece captures it vacates its square, which can expose a rook or bishop
+behind it — a battery. So the attacker set is recomputed against a *modified* occupancy mask,
+not the real board. `python-chess` exposes `attackers_mask(color, square, occupied)`, which
+takes exactly that mask, so SEE never makes or unmakes a move — it is genuinely static. There
+is a test for a rook capturing with a queen behind it on the same file.
+
+**The king cannot capture into check.** This one is enforced rather than simplified away,
+because ignoring it is *not* conservative: it would let the king "recapture" illegally and
+report a losing exchange as safe. The test has a control — remove the pawn covering the
+square and the king's recapture becomes legal, and SEE must then report -400 instead of +100 —
+so the test cannot pass by the king simply never being considered.
+
+Two simplifications are conservative and therefore acceptable: **pins are ignored** (a pinned
+defender is still counted, so SEE over-counts defenders and under-estimates some winning
+captures, losing a little search rather than pruning a good move), and **promotions during the
+exchange are ignored**.
+
+### Measured
+
+```
+python -m bench.nodes --config quiescence-see --depth 4 --baseline bench/baselines/tt-id-d4.json
+```
+
+Depth 4, against `tt-id` at the same depth:
+
+| config | nodes | aggregate | median | time | scores changed | best move changed |
+|---|---:|---:|---:|---:|---:|---:|
+| `tt-id` | 46,333 | — | — | 3.97s | — | — |
+| `quiescence` | 208,119 | +349.2% | +168.1% | 8.85s | 8/13 | 4/13 |
+| `quiescence-see` | 118,509 | +155.8% | +81.4% | 5.18s | 8/13 | 4/13 |
+
+Node counts going **up** is the correct direction here, and the test suite asserts it in that
+direction: `test_quiescence_increases_node_count_at_the_same_depth` would fail if quiescence
+ever searched *less*, because that would mean it was not resolving the captures it exists to
+resolve.
+
+The useful number in that table is the last column. Quiescence changed the score on **8 of 13**
+positions and the chosen move on **4 of 13** — `open-game`, `italian`, `perft-4` and
+`wac-002`. Those four are positions where the engine was previously making a horizon error and
+now is not. That is not a strength measurement, but it is an honest count of decisions changed.
+
+### SEE's own contribution, and a result worth not over-claiming
+
+`quiescence-see` against `quiescence`:
+
+| | value |
+|---|---|
+| nodes | **-43.1%** aggregate, -16.1% median |
+| time | **-41.4%** |
+| best move | **13/13 identical** |
+| score | **13/13 identical** |
+
+So on this position set SEE removed 43% of the work and changed nothing at all. That is a very
+clean result and it should not be over-read: **SEE is a heuristic filter, not a
+score-preserving transformation.** It prunes captures it believes lose material, and because
+it ignores pins it is wrong in a conservative direction some of the time. 13/13 here means
+that on these thirteen positions every capture it pruned was genuinely irrelevant; it does not
+mean that is guaranteed. It is reported as a measurement on a named set, not as a property.
+
+### The headline: a more accurate search, far cheaper than the plain baseline
+
+Quiescence is the first feature whose benefit is accuracy, so the right comparison is against
+the original plain search at the same nominal depth — and then at greater depth.
+
+| | nodes | seconds | vs `phase0` depth 4 |
+|---|---:|---:|---:|
+| `phase0`, depth 4 | 802,700 | 69.27 | — |
+| `quiescence-see`, depth 4 | 118,509 | 5.18 | **-92.5% time** |
+| `quiescence-see`, depth 5 | 670,564 | 21.43 | **-69.1% time** |
+| `quiescence-see`, depth 6 | 1,991,205 | 81.20 | +17.2% time |
+
+The first row of that comparison is the one to quote: **a depth-4 search that also resolves
+every capture past the horizon now costs 7.5% of what the plain depth-4 search cost** — more
+accurate and 13 times faster. And within roughly the same wall clock as the original depth-4
+search, the engine now reaches **depth 6 with quiescence**, two plies deeper with the horizon
+effect fixed.
+
+### An incidental observation: nodes per second went up a lot
+
+11,588 nps for `phase0`, around 11,500 for `tt-id`, and 23,000-31,000 for `quiescence-see`.
+Quiescence nodes are individually much cheaper than main-search nodes: they call
+`generate_legal_captures()` instead of generating every legal move, they sort by MVV-LVA alone
+rather than consulting killers and history, and many of them return immediately on stand-pat.
+So adding quiescence roughly doubles throughput while more than doubling the node count —
+which is a good reminder that nodes per second is a property of the *mix* of node types, not a
+measure of engine quality. An engine can raise its nps by doing cheaper and less useful work.
+
+### What went wrong
+
+Three things, all in the tests, and one of them was a genuine defect in work already
+committed.
+
+**An illegal test position had been committed in step 1.** A sweep of every FEN in the
+repository through `python-chess`'s `status()` found that
+`4k3/3P4/8/8/8/8/8/4K3 w - - 0 1` — used by three tests for promotion hashing and promotion
+ordering — is not a legal position: the black king on e8 stands in check from the pawn on d7
+while it is White's move. `python-chess` happily generated `d7xe8`, a move that captures the
+king. The tests passed, because nothing they asserted depended on legality, but a promotion
+test whose position allows capturing the king is not testing promotion. Replaced with
+`5k2/3P4/8/8/8/8/8/4K3 w - - 0 1`. The sweep is worth running again whenever FENs are added
+by hand.
+
+**Two test positions in this step were wrong in the same family.** The first attempt at the
+king-cannot-recapture test put the king where it could not make the *initial* capture at all,
+so the test failed before reaching the thing it meant to check. The first attempt at the
+check-evasion test used a rook on a8 and a king on g1 — which is not a check, since a8
+attacks neither the first rank nor the g-file. Both were caught by assertions placed *before*
+the interesting one (`assert move in board.legal_moves`, `assert board.is_check()`), which is
+the argument for writing those guard assertions even though they look redundant.
