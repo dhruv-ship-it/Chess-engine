@@ -15,7 +15,7 @@ optimisation is **measured** rather than assumed.
 | phase | scope | state |
 |---|---|---|
 | 0 | Correct baseline: evaluation, negamax alpha-beta, test suite, CI | **done** |
-| 1 | Move ordering, transposition table, quiescence, PVS, time management | **in progress** |
+| 1 | Move ordering, transposition table, quiescence, PVS, time management | **done** |
 | 2 | Benchmark suite and self-play Elo measurement with confidence intervals | not started |
 | 3 | UCI protocol, Lichess bot | not started |
 
@@ -43,13 +43,18 @@ Current measurements, all reproducible with the commands below:
 - **Aspiration windows measured at zero** (−0.0% median at every depth tested), so they are
   implemented, tested, and switched off. Which features did nothing is part of the result.
 - **A depth-4 search that also resolves every capture past the horizon now costs 6.9% of what
-  the plain depth-4 search cost** — more accurate and 15× faster. In roughly the plain
-  baseline's depth-4 time budget, the engine now reaches depth 6 with quiescence.
+  the plain depth-4 search cost** — more accurate and 15× faster.
+- **Under a clock, which is the measurement that matters: +2.08 plies of mean search depth at
+  a 1-second budget and +2.93 plies at 3 seconds**, against the plain alpha-beta baseline
+  over the same 13 positions. Per-step: move ordering +1.31, transposition table with
+  iterative deepening +0.62, quiescence +0.08, PVS +0.08.
+- **Worst hard-time-limit overshoot: +26.5 ms**, with the clock checked every 256 nodes.
 
 Nothing about **strength** is claimed yet, because strength has not been measured yet. Node
-count is an activity metric; Elo is the result metric, and that is Phase 2. At a fixed depth
-a score-preserving optimisation plays identical moves and is worth exactly 0 Elo by
-construction, so Phase 2 measures under a time budget.
+count and depth are activity metrics; Elo is the result metric, and that is Phase 2. At a
+fixed depth a score-preserving optimisation plays identical moves and is worth exactly 0 Elo
+by construction, which is why the depth-per-budget figures above are measured under a clock
+and why Phase 2's self-play harness will be too.
 
 ## Architecture
 
@@ -61,7 +66,8 @@ engine/ordering.py   MVV-LVA, killer moves, history heuristic
 engine/zobrist.py    incremental Zobrist hashing, O(1) per move, tree-walk validated
 engine/transposition.py  bounded table, EXACT/LOWERBOUND/UPPERBOUND, stores the best move
 engine/see.py        static exchange evaluation (swap algorithm) for capture pruning
-                     PVS and aspiration windows live in engine/searcher.py
+                     PVS, aspiration windows and time management are in engine/searcher.py
+bench/timed.py       depth reached within a fixed time budget, per configuration
 bench/positions.py   the 13-position benchmark set, validated at import
 bench/nodes.py       fixed-depth node/time benchmark, JSON baselines, comparison mode
 bench/perft.py       node-count reference suite and make/unmake throughput benchmark
@@ -110,11 +116,14 @@ python -m bench.perft --validate-zobrist --depth 3
 # the search benchmark, and any configuration compared against a committed baseline
 python -m bench.nodes --config phase0 --depth 4
 python -m bench.nodes --config tt-id --depth 5 --baseline bench/baselines/ordering-d5.json
+
+# depth reached in a fixed time budget -- the measurement that makes the rest mean anything
+python -m bench.timed --ms 1000
 ```
 
 Configurations are `phase0`, `ordering`, `tt-move-only`, `tt`, `tt-id`, `id-only`,
-`quiescence`, `quiescence-see`, `pvs-pure`, `pvs` and `pvs-asp`; `pvs` is the recommended
-one. They
+`quiescence`, `quiescence-see`, `pvs-pure`, `pvs` and `pvs-asp`. `phase1` is an alias for
+the recommended one. They
 are finer-grained than the features on purpose: a transposition table bundles three separable
 claims -- the best-move hint, the score cutoff, and the iterative deepening that exploits the
 hint -- and they are worth very different amounts, so each is measured on its own.
@@ -123,9 +132,15 @@ hint -- and they are worth very different amounts, so each is measured on its ow
 import chess
 from engine.searcher import CONFIGS, Searcher
 
-searcher = Searcher(CONFIGS["pvs"])
+searcher = Searcher(CONFIGS["phase1"])
+
+# fixed depth
 result = searcher.search(chess.Board(), depth=5)
 print(result.move, result.score, searcher.stats.nodes)
+
+# or against a clock, which is what an engine actually does
+timed = searcher.search_timed(chess.Board(), hard_ms=1500, soft_ms=1000)
+print(timed.move, timed.score, timed.completed_depth, timed.elapsed_ms)
 ```
 
 ## Evaluation

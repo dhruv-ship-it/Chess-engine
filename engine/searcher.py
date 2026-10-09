@@ -55,6 +55,8 @@ implementation look like a regression:
 
 from __future__ import annotations
 
+import statistics
+import time
 from dataclasses import dataclass, replace
 
 import chess
@@ -192,6 +194,115 @@ CONFIGS: dict[str, SearchConfig] = {
     ),
 }
 
+# The recommended configuration: everything that measured as a gain, and nothing that did
+# not. Aspiration windows are deliberately absent -- they measured at -0.0% median here, so
+# including them would be adding a moving part for no benefit.
+CONFIGS["phase1"] = CONFIGS["pvs"]
+
+# How often the clock is consulted during a timed search, as a bitmask on the node counter:
+# 255 means every 256th node.
+#
+# This interval is the granularity of the hard limit, and therefore an upper bound on how far
+# the search can overshoot it. The first version used every 2048th node, which at this
+# engine's 25,000-30,000 nodes per second is roughly 70-80 ms, and it overshot a 500 ms hard
+# limit by 50 ms -- in a real game that is how an engine loses on time. At 256 nodes the
+# granularity is around 10 ms.
+#
+# The cost is negligible in return: `time.perf_counter()` takes on the order of 100 ns, so at
+# 30,000 nodes per second this is about 120 calls per second, or roughly 0.001% of the budget.
+# Checking at *every* node would not be: an attribute load and a comparison per node is
+# measurable in CPython when a node costs around 35 microseconds.
+CLOCK_CHECK_MASK = 255
+
+# Growth-factor bounds for predicting the next iteration's cost. The factor is measured from
+# the iterations actually run, and clamped: a single anomalous iteration -- an aspiration
+# miss, a mate suddenly appearing, a transposition-table hit collapsing a subtree -- would
+# otherwise produce a prediction of near-zero or near-infinity and either overspend the clock
+# or abandon it. The median of the last three ratios is used rather than the last one, for the
+# same reason.
+MIN_GROWTH = 1.5
+MAX_GROWTH = 8.0
+DEFAULT_GROWTH = 3.0
+
+# An iteration shorter than this fraction of the hard budget is treated as too small to
+# predict from, and the next iteration is started unconditionally.
+MIN_ITERATION_FRACTION = 0.02
+
+# While less than this fraction of the hard budget has been spent, start the next iteration
+# regardless of what the prediction says. The justification is that an aborted iteration is
+# not wasted -- its best move is kept -- so being optimistic costs little, while being
+# pessimistic costs a whole ply. Measured deficiency it fixes: `tt-id` stopped at depth 3 on
+# `italian` having spent 276 ms of a 1,500 ms budget, because one fast iteration produced a
+# growth estimate three times too high.
+OPTIMISTIC_FRACTION = 0.5
+
+
+class SearchAborted(Exception):
+    """Raised to unwind the recursion when the hard time limit is reached.
+
+    An exception rather than a flag checked at every return, because the search is recursive
+    and a flag would need handling at every one of the four places a score is returned. The
+    cost is that the board is left mid-variation when it propagates, so `search_timed`
+    restores it explicitly -- see `_restore`.
+    """
+
+
+@dataclass
+class TimedResult:
+    """The outcome of a search against a clock."""
+
+    move: chess.Move | None
+    score: int
+    depth: int
+    """Deepest depth whose result is being reported."""
+
+    completed_depth: int
+    """Deepest depth that finished entirely. Equals `depth` unless a partial iteration
+    produced a better move, in which case `depth` is one greater."""
+
+    elapsed_ms: float
+    nodes: int
+    aborted: bool
+    """Whether the final iteration was cut short by the hard limit."""
+
+
+def allocate_time(
+    remaining_ms: int,
+    increment_ms: int = 0,
+    moves_to_go: int | None = None,
+) -> tuple[int, int]:
+    """Split a clock into a soft and a hard budget for one move, in milliseconds.
+
+    Returns `(soft_ms, hard_ms)`.
+
+    * **soft** is the target. After each completed iteration the search asks whether another
+      one would fit inside it, and stops if not. Stopping cleanly between iterations is far
+      better than being cut off inside one, because a completed iteration has a trustworthy
+      score and a partial one does not.
+    * **hard** is the ceiling that aborts mid-iteration. It is larger than the soft budget so
+      that an iteration which turns out to be unexpectedly expensive can still finish rather
+      than being wasted entirely.
+
+    `moves_to_go` is the number of moves until the next time control, when the time control
+    has one. Without it the game length has to be guessed, and 30 is the usual assumption:
+    guessing too low spends the clock early, too high leaves time unused at the end.
+
+    Only 80% of the increment is claimed, leaving a small margin so that a consistently
+    slight overshoot cannot drain the clock across a long game.
+    """
+    if remaining_ms <= 0:
+        return 0, 0
+
+    expected_moves = moves_to_go if moves_to_go and moves_to_go > 0 else 30
+    soft = remaining_ms / expected_moves + increment_ms * 0.8
+
+    # Never commit more than a fraction of what is left, whatever the arithmetic says. With a
+    # very short clock the formula above can exceed the remaining time outright.
+    hard = min(soft * 3.0, remaining_ms * 0.4)
+    soft = min(soft, hard)
+    return max(1, int(soft)), max(1, int(hard))
+
+
 # Half-width of the first aspiration window, in centipawns. Roughly half a pawn: wide enough
 # that most iterations land inside it, narrow enough to prune hard. On a miss the window is
 # widened by this factor rather than jumping straight to infinity, so a near miss stays cheap.
@@ -264,6 +375,12 @@ class Searcher:
         self.pvs_researches = 0
         self.aspiration_misses = 0
 
+        # Timing state. `None` means "no clock", which keeps the untimed path -- the one all
+        # the committed benchmark baselines were measured on -- free of any clock handling
+        # beyond a single `is not None` test per node.
+        self._deadline: float | None = None
+        self._root_best_so_far: tuple[chess.Move, int, int] | None = None
+
     # -- internals ---------------------------------------------------------------------
 
     def _negamax(
@@ -280,7 +397,10 @@ class Searcher:
         the value usable as a bound rather than only as a cutoff flag. The transposition
         table in a later step depends on that.
         """
-        self.stats.nodes += 1
+        nodes = self.stats.nodes + 1
+        self.stats.nodes = nodes
+        if not nodes & CLOCK_CHECK_MASK and self._deadline is not None:
+            self._check_clock()
 
         # The draw check precedes the transposition probe deliberately. The halfmove clock is
         # not part of the Zobrist key (standard, and noted in engine/transposition.py), so
@@ -407,6 +527,11 @@ class Searcher:
 
         return best
 
+    def _check_clock(self) -> None:
+        """Abort if the hard limit has passed."""
+        if time.perf_counter() >= self._deadline:
+            raise SearchAborted
+
     def _quiescence(
         self,
         board: chess.Board,
@@ -431,7 +556,10 @@ class Searcher:
         at the same nominal depth, and it returns different scores, because the scores it
         replaces were wrong.
         """
-        self.stats.nodes += 1
+        nodes = self.stats.nodes + 1
+        self.stats.nodes = nodes
+        if not nodes & CLOCK_CHECK_MASK and self._deadline is not None:
+            self._check_clock()
         self.quiescence_nodes += 1
         if qply > self.max_quiescence_ply:
             self.max_quiescence_ply = qply
@@ -648,6 +776,7 @@ class Searcher:
             return SearchResult(move=None, score=score, depth=depth, stats=self.stats)
 
         window_alpha = alpha
+        self._root_best_so_far = None
         tt = self.tt
         tt_move = None
         key = 0
@@ -692,6 +821,13 @@ class Searcher:
             if score > alpha:
                 alpha = score
 
+            # Published after every completed root move, so that if the hard limit fires
+            # mid-iteration the caller can still use what this iteration established. That is
+            # sound because the previous iteration's best move is ordered first here (the
+            # transposition table supplies it), so any move that has since overtaken it is
+            # genuinely better at this deeper depth.
+            self._root_best_so_far = (best_move, best_score, index + 1)
+
         if tt is not None:
             # Only an exact value may be stored as EXACT. Inside an aspiration window the
             # root can fail low -- no move beat the window's alpha -- and the score is then
@@ -707,6 +843,186 @@ class Searcher:
 
         self.stats.depth_reached = depth
         return SearchResult(move=best_move, score=best_score, depth=depth, stats=self.stats)
+
+    def search_timed(
+        self,
+        board: chess.Board,
+        hard_ms: int,
+        soft_ms: int | None = None,
+        max_depth: int = 64,
+    ) -> TimedResult:
+        """Search to a time budget rather than to a fixed depth.
+
+        This is what a real engine actually does: it is handed a clock, not a depth. Iterative
+        deepening is what makes it possible at all, because it leaves a usable best move after
+        every completed iteration, so the search can be stopped at any moment and still have
+        an answer.
+
+        Two limits, doing different jobs:
+
+        * `soft_ms` gates **starting** another iteration. After each one the search predicts
+          what the next would cost, from the growth actually observed between the last two
+          iterations, and declines to start one that will not fit. Stopping cleanly between
+          iterations is much better than being cut off inside one.
+        * `hard_ms` **aborts** mid-iteration. Needed because the prediction can be wrong -- a
+          position where the score suddenly swings makes an iteration far more expensive than
+          its predecessor suggested.
+
+        An aborted iteration's **score is discarded**, because a partially searched root has
+        only examined some of its moves and its score is a lower bound, not a value. Its
+        **move** is kept when at least one root move completed, which is sound because the
+        previous iteration's best move is searched first, so anything that overtook it is
+        better at the deeper depth.
+        """
+        if soft_ms is None:
+            soft_ms = hard_ms
+
+        start = time.perf_counter()
+        self._deadline = start + hard_ms / 1000.0
+        depth_floor = len(board.move_stack)
+
+        if self.config.transposition_table:
+            self.zobrist = ZobristTracker(board)
+            self.tt.new_search()
+
+        best = TimedResult(
+            move=None, score=0, depth=0, completed_depth=0,
+            elapsed_ms=0.0, nodes=0, aborted=False,
+        )
+        previous_score: int | None = None
+        iteration_times: list[float] = []
+
+        for depth in range(1, max_depth + 1):
+            iteration_start = time.perf_counter()
+            try:
+                result = self._search_with_aspiration(board, depth, previous_score)
+            except SearchAborted:
+                self._restore(board, depth_floor)
+                best.aborted = True
+                partial = self._root_best_so_far
+                if partial is not None and partial[2] >= 1 and depth > best.completed_depth:
+                    # Keep the deeper move, but not its score: a root that has examined only
+                    # some of its moves gives a lower bound, and reporting it as the position's
+                    # value would be reporting a number the search never established.
+                    best.move = partial[0]
+                    best.depth = depth
+                break
+
+            elapsed = time.perf_counter() - iteration_start
+            iteration_times.append(elapsed)
+            previous_score = result.score
+            best.move = result.move
+            best.score = result.score
+            best.depth = depth
+            best.completed_depth = depth
+
+            if result.is_mate and result.score > 0:
+                break
+            if result.move is None:
+                break
+
+            total_elapsed = time.perf_counter() - start
+            if total_elapsed * 1000.0 >= soft_ms:
+                break
+            if not self._next_iteration_fits(iteration_times, total_elapsed, hard_ms):
+                break
+
+        self._deadline = None
+
+        if best.move is None:
+            # An engine must never answer "no move". This only happens with a budget so small
+            # that not even one root move finished before the first clock check, which is
+            # 256 nodes away -- so it is a guard against a pathological clock rather than an
+            # expected path, but a guard worth having, because the alternative is forfeiting.
+            #
+            # It also records an honest limitation: the hard limit's granularity is 256
+            # nodes, so a budget smaller than that much work cannot be honoured. Measured, a
+            # 1 ms budget on a dense middlegame takes about 16 ms. For the hundreds of
+            # milliseconds a real time control allows, this does not arise.
+            legal = list(board.legal_moves)
+            best.move = legal[0] if legal else None
+
+        best.elapsed_ms = (time.perf_counter() - start) * 1000.0
+        best.nodes = self.stats.nodes
+        return best
+
+    @staticmethod
+    def _next_iteration_fits(
+        iteration_times: list[float],
+        total_elapsed: float,
+        hard_ms: int,
+    ) -> bool:
+        """Is there any prospect of another iteration finishing?
+
+        The prediction is compared against the **hard** budget, not the soft one, and that is
+        a deliberate choice worth explaining because the obvious alternative is worse.
+
+        Testing against the soft budget means only starting an iteration that is expected to
+        finish inside the target. It sounds right and it wastes a lot of clock: on `kiwipete`
+        with a 1,000 ms target, that rule stopped at depth 3 after 678 ms, declining to spend
+        the remaining third because depth 4 would not fit.
+
+        Testing against the hard budget starts the iteration anyway. If it finishes, a whole
+        extra ply has been gained; if it does not, the abort keeps the best move the partial
+        iteration found, which is at least as good as the previous iteration's because the
+        previous best move is searched first. The cost is that the reported score then comes
+        from a shallower depth than the reported move, which `TimedResult.completed_depth`
+        makes explicit rather than hiding.
+
+        The growth factor is **measured** from the last two iterations rather than assumed,
+        because it varies a lot with the position -- a quiet endgame with a low branching
+        factor grows far more slowly than a dense middlegame. It is clamped so that one
+        anomalous iteration (an aspiration miss, a mate suddenly appearing) cannot produce a
+        prediction of either zero or infinity.
+        """
+        last = iteration_times[-1]
+        hard_seconds = hard_ms / 1000.0
+
+        # An iteration that consumed a negligible slice of the budget tells you nothing
+        # useful about the next one's cost, and cannot plausibly blow the budget on its own,
+        # so just continue.
+        #
+        # This guard is not a detail -- leaving it out produced a measurably wrong benchmark.
+        # Dividing two very fast iterations gives a wild ratio, and with the clamp set
+        # generously the prediction came out enormous: `tt-id` stopped at depth 3 on
+        # `italian` having used 2,962 nodes of a 1,500 ms budget, while the slower
+        # `quiescence-see` reached depth 4 simply because its iterations were big enough for
+        # the growth estimate to be meaningful. The timed benchmark was therefore partly
+        # comparing time managers rather than searches.
+        if last < hard_seconds * MIN_ITERATION_FRACTION:
+            return True
+
+        # Plenty of budget left: attempt another ply rather than banking the time. An abort
+        # keeps the deeper move, so the downside is a score from one ply shallower, while the
+        # upside is a whole extra ply of search.
+        if total_elapsed < hard_seconds * OPTIMISTIC_FRACTION:
+            return True
+
+        ratios = [
+            later / earlier
+            for earlier, later in zip(iteration_times, iteration_times[1:])
+            if earlier > 0
+        ]
+        growth = statistics.median(ratios[-3:]) if ratios else DEFAULT_GROWTH
+        growth = min(max(growth, MIN_GROWTH), MAX_GROWTH)
+
+        return (total_elapsed + last * growth) <= hard_seconds
+
+    def _restore(self, board: chess.Board, depth_floor: int) -> None:
+        """Undo the pushes left behind when an abort unwound the recursion.
+
+        `SearchAborted` propagates straight through the move loops, so the pops never run and
+        the board is left somewhere deep in a variation. Wrapping every push in `try/finally`
+        would fix it at the cost of a context manager on the hottest path in the engine;
+        popping back to a recorded depth afterwards costs nothing and is just as correct.
+
+        The Zobrist key is re-seeded rather than unwound, because its stack is in the same
+        state as the board's and re-seeding from the restored position is unambiguous.
+        """
+        while len(board.move_stack) > depth_floor:
+            board.pop()
+        if self.zobrist is not None:
+            self.zobrist.reset(board)
 
     def reset_stats(self) -> None:
         self.stats.reset()
@@ -728,5 +1044,7 @@ class Searcher:
         self.see_prunes = 0
         self.pvs_researches = 0
         self.aspiration_misses = 0
+        self._deadline = None
+        self._root_best_so_far = None
         if self.tt is not None:
             self.tt.clear()

@@ -265,14 +265,30 @@ All covered by the Chess Programming Wiki.
 - [x] Direction decided: Option 1, engine only
 - [x] New repo created: `D:\projects\Chess-engine` (local; GitHub remote pending)
 - [x] **Phase 0 — correct baseline.** 73 tests green, tactics 12/12, perft 15/15 at ~660k nps
-- [ ] Phase 1 — ordering, transposition table, quiescence, PVS, time management
+- [x] **Phase 1 — ordering, transposition table, quiescence, PVS, time management.**
+      859 tests green. Depth 4 at fixed depth: 802,700 nodes / 69.27s -> 111,401 / 4.76s.
+      Under a clock: +2.08 plies at 1s, +2.93 plies at 3s. Incremental Zobrist validated
+      over 7,037,881 nodes with 0 inconsistencies. Per-step numbers in `docs/DEVLOG.md`.
 - [ ] Phase 2 — benchmark position set, self-play Elo with confidence intervals
 - [ ] Phase 3 — UCI, Lichess bot
 - [ ] Separate AI project (RAG + evals), scoped later
 
 ### Immediate next steps
-1. User creates the GitHub repo `Chess-engine` and adds the remote (see README/handover).
-2. Phase 1, in this order, each measured against the Phase 0 baseline and each required not
-   to change the score at fixed depth: move ordering, then transposition table with
-   incremental Zobrist, then quiescence, then PVS, then time management.
-3. Keep `engine/search.py`'s plain `negamax` reachable as the Phase 2 control.
+
+Phase 1 is done. Phase 2 is next, and three things learned while building Phase 1 change how
+it has to be built:
+
+1. **Elo must be measured at fixed time or a fixed node budget per move, never fixed depth.**
+   At fixed depth a score-preserving optimisation plays identical moves -- the differential
+   tests enforce exactly that -- so it is worth 0 Elo by construction. `search_timed` and
+   `bench/timed.py` already exist for this.
+2. **The control is `engine/search.py` driven through `Searcher.search_timed`**, so the
+   comparison is between searches rather than between time managers. `bench/timed.py` does
+   this already; the discovery that it matters is written up in the step-5 devlog entry.
+3. **Per-feature attribution is already wired.** `engine.searcher.CONFIGS` holds each
+   intermediate configuration, so an Elo-per-feature table needs the harness, not new engine
+   code.
+
+Remaining Phase 2 work: an opening book of varied positions, each played twice with colours
+reversed; a self-play harness with Elo plus confidence intervals (and SPRT if time allows);
+and a results table where every number names the script that produced it.

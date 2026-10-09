@@ -75,8 +75,23 @@ plan. Read both before proposing changes.
 
 ## Current state
 
-Phase 0 is complete: 73 tests passing, tactical suite 12/12, perft 15/15 at ~660k nps.
-Phase 1 is in progress — see `docs/DEVLOG.md` for where it stands and `PLAN.md` for order.
+**Phase 0 and Phase 1 are both complete.** 859 tests passing, tactical suite 12/12 on every
+search configuration, perft 15/15, incremental Zobrist validated over 7,037,881 nodes with 0
+inconsistencies.
+
+Phase 1 results: at fixed depth 4 over the 13-position benchmark set, 802,700 nodes / 69.27s
+became 111,401 / 4.76s, with the horizon effect fixed on top. Under a clock, +2.08 plies of
+mean depth at a 1-second budget and +2.93 at 3 seconds.
+
+`engine.searcher.CONFIGS` holds every intermediate configuration (`phase0`, `ordering`,
+`tt-move-only`, `tt`, `tt-id`, `id-only`, `quiescence`, `quiescence-see`, `pvs-pure`, `pvs`,
+`pvs-asp`, and `phase1` as an alias for the recommended one), which is what makes per-feature
+attribution possible. Aspiration windows are implemented, tested, and **off**, because they
+measured at -0.0% median here.
+
+Phase 2 is next — see the "Immediate next steps" section of `PLAN.md`, which records the
+three findings from Phase 1 that change how it has to be built. Per-step reasoning and every
+number is in `docs/DEVLOG.md`.
 
 ## About the user
 

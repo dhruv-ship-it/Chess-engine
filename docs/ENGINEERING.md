@@ -32,7 +32,7 @@ that is Stockfish's job.
 **On perft.** The repo has a perft harness, and it does *not* validate move generation here,
 because `python-chess` owns move generation. It is kept as a throughput benchmark for the
 make/unmake path and as the tree-walk harness that validates incremental Zobrist hashing.
-Section 11 covers what the real correctness harness is.
+Section 12 covers what the real correctness harness is.
 
 ---
 
@@ -50,7 +50,8 @@ engine/
 bench/
   positions.py     the 13-position benchmark set, validated at import
   nodes.py         fixed-depth node/time benchmark, JSON baselines, comparison mode
-  perft.py         move-tree node counts vs published references; throughput benchmark
+  timed.py         depth reached within a fixed time budget, per configuration
+  perft.py         move-tree node counts vs published references; Zobrist validation
 tests/
   conftest.py      the search_fn fixture: every configuration, so tests cover them all
   test_eval.py     evaluation invariants, including symmetry and table lengths
@@ -62,6 +63,7 @@ tests/
   test_see.py      hand-computed exchanges, X-rays, the king-recapture rule
   test_quiescence.py horizon effect, stand-pat, check evasions, the recursion cap
   test_pvs.py      PVS score preservation, the re-search path, aspiration widening
+  test_time_management.py  limits respected, state restored after abort, partial iterations
   test_tactics.py  end-to-end tactical regression, run against every configuration
   test_bench.py    tests for the measurement harness itself
 ```
@@ -94,6 +96,7 @@ CONFIGS = {
     "pvs-pure":       ...,   # ordering plus PVS only -- exists for the exactness test
     "pvs":            ...,   # quiescence-see plus PVS; the recommended configuration
     "pvs-asp":        ...,   # plus aspiration windows, which measured as worthless here
+    "phase1":         CONFIGS["pvs"],   # the recommended configuration
 }
 ```
 
@@ -618,7 +621,116 @@ the frozen baseline's exact score there at depths 4, 5 and 6, so the deviation i
 
 ---
 
-## 10. Measurement methodology
+## 10. Time management
+
+### Why this is the step that makes the rest matter
+
+At a **fixed depth**, a score-preserving optimisation plays *identical moves* to the baseline
+-- which is precisely what the differential tests enforce. So move ordering, the transposition
+table and PVS are each worth exactly **zero** at fixed depth, by construction. Their value
+exists only because the time they save buys extra depth, and only a timed benchmark can show
+it.
+
+This is also why Phase 2's Elo harness must play at a fixed time or node budget. Measuring
+Elo at fixed depth would correctly report +0 and look like a broken harness.
+
+### Two limits
+
+**Soft** gates *starting* another iteration; **hard** *aborts* mid-iteration. Stopping cleanly
+between iterations is much better than being cut off inside one, because a completed iteration
+has a trustworthy score and a partial one does not -- but the prediction can be wrong, so the
+hard limit has to exist.
+
+`allocate_time(remaining_ms, increment_ms, moves_to_go)` gives
+`remaining / expected_moves + 0.8 * increment` as the soft budget, three times that as the
+hard one, both capped at 40% of what remains. Only 80% of the increment is claimed so a
+consistently slight overshoot cannot drain the clock over a long game. Without `moves_to_go`,
+30 moves are assumed: too low spends the clock early, too high leaves time unused.
+
+### Aborting a recursive search without corrupting the board
+
+The hard limit raises `SearchAborted` from inside the recursion -- an exception rather than a
+flag, because a score is returned from four different places and each would need to handle it.
+
+**The exception skips every pending `board.pop()`.** After an abort the board is sitting deep
+inside a variation, and the *next* search would run on the wrong position: a bug that surfaces
+as an inexplicable evaluation far from its cause. Rather than wrap every push in
+`try/finally` -- a context manager on the hottest path in the engine -- the move-stack depth is
+recorded beforehand and popped back to afterwards, with the Zobrist key re-seeded from the
+restored position. `test_the_board_is_restored_after_an_abort` runs every benchmark position at
+a budget small enough to force aborts, asserts the board is identical afterwards, and requires
+that at least one abort happened so it cannot pass vacuously.
+
+### A partial iteration keeps its move but not its score
+
+The move is sound: the previous iteration's best move is ordered first, so anything that has
+overtaken it is better at the deeper depth. The score is not: a root that has examined only
+some of its moves has a lower bound, not a value. `TimedResult` therefore reports `depth` and
+`completed_depth` separately, differing by one when a partial iteration contributed the move.
+
+### Three deficiencies the measurements exposed
+
+Each of these passed every test and was found only by reading benchmark output.
+
+**The clock was checked too rarely.** Every 2048th node is 70-80ms at this engine's
+throughput, and it overshot a 500ms hard limit by 50ms. Tightened to every 256th node, about
+10ms; worst overshoot now measured at **+26.5ms** across the whole set at four budgets.
+`time.perf_counter()` costs about 100ns, so this is roughly 120 calls per second -- while
+checking at every node would be measurable against a node cost of about 35 microseconds.
+
+**The growth prediction banked unused clock.** The textbook rule -- start an iteration only if
+it is predicted to fit -- wasted a third of the budget: `tt-id` stopped at depth 3 on `italian`
+having spent **276ms of 1,500ms**, because dividing two fast iterations gives a wild ratio.
+Worse, the *slower* `quiescence-see` reached depth 4 purely because its iterations were big
+enough for the estimate to mean something, which made the timed benchmark partly a comparison
+of time managers rather than of searches. Fixed three ways: the growth factor is the median of
+the last three ratios, an iteration under 2% of the budget is too small to predict from, and
+while under half the hard budget is spent the next iteration starts regardless. The last is
+justified by the point above -- an abort keeps its move, so optimism costs a shallower score
+while pessimism costs a whole ply.
+
+**The engine could answer with no move.** With a budget smaller than 256 nodes of work the
+first clock check can fire before any root move completes. A fallback plays the first legal
+move; the test *forces* the path rather than hoping for it, because it never triggered
+naturally. This also records a limitation: the hard limit's granularity is 256 nodes, so a 1ms
+budget on a dense middlegame actually takes about 16ms.
+
+### Measured: depth reached in a fixed budget
+
+```
+python -m bench.timed --ms 1000
+python -m bench.timed --ms 3000
+```
+
+Mean depth over the 13 positions, same budget for every configuration, all driven by the same
+iterative-deepening loop:
+
+| config | depth in 1s | depth in 3s |
+|---|---:|---:|
+| `phase0` (plain alpha-beta) | 3.54 | 4.15 |
+| `ordering` | 4.85 | 5.23 |
+| `tt-id` | 5.46 | 6.31 |
+| `quiescence-see` | 5.54 | 7.00 |
+| `phase1` | **5.62** | **7.08** |
+| | **+2.08 plies** | **+2.93 plies** |
+
+Median depth goes 3 to 5 at one second, 4 to 6 at three. The gap widens with the budget, which
+is what an exponential tree predicts: the deeper you already are, the more plies a
+constant-factor saving is worth.
+
+Per-step attribution at one second: ordering **+1.31**, transposition table with iterative
+deepening **+0.62**, quiescence **+0.08**, PVS **+0.08**.
+
+Quiescence contributing almost nothing *in depth* is the correct result and worth saying
+plainly: quiescence does not buy depth, it buys accuracy at a given depth. It is roughly
+depth-neutral here only because its nodes are individually much cheaper -- 31,782 per second
+against 15,244 for `tt-id` -- so the extra nodes nearly pay for themselves. Its real
+contribution is the 8 of 13 positions whose score it corrected and the 4 of 13 whose move it
+changed, and putting a number on that requires games, which is Phase 2.
+
+---
+
+## 11. Measurement methodology
 
 Two rules, both of them reactions to specific failures in the predecessor project rather
 than general good practice.
@@ -685,7 +797,7 @@ point estimate.
 
 ---
 
-## 11. Correctness strategy
+## 12. Correctness strategy
 
 The predecessor's three "optimisation" commits took its tactical score from 12/12 to 5/12,
 and a node-count benchmark reported the change as a 69% improvement — which it was. It
@@ -728,7 +840,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13 plus the perft references on eve
 
 ---
 
-## 12. Results
+## 13. Results
 
 Measured on Python 3.11.4, `python-chess` 1.11.2, Windows 11. Node counts are deterministic
 and reproduce anywhere; timings are machine-dependent.
@@ -743,7 +855,7 @@ python -m bench.nodes --config phase0 --depth 4
 
 | | result |
 |---|---|
-| tests | 808 passing |
+| tests | 859 passing |
 | tactical suite | 12/12 across depths 2-4, on every configuration |
 | perft references | 15/15 correct, ~660k nodes/sec aggregate |
 | incremental Zobrist | 7,037,881 nodes checked at depth 4, 0 inconsistent keys |
@@ -769,6 +881,9 @@ python -m bench.nodes --config <name> --depth 4 --baseline bench/baselines/phase
 | 3. + SEE pruning | `quiescence-see` | 118,509 | -85.2% | -75.6% | 8/13 changed, by design |
 | 4. + PVS | `pvs` | 111,401 | -86.1% | -77.2% | same as step 3 |
 | 4. + aspiration | `pvs-asp` | 112,573 | -86.0% | -76.8% | same as step 3 |
+
+Step 5 adds time management, which does not change a fixed-depth search at all; its result is
+the depth table in section 10.
 
 Steps 1 and 2 reduce nodes; step 3 *increases* them against step 2 while making the search
 more accurate, which is why its row is still well below the Phase 0 baseline but above
@@ -810,6 +925,14 @@ individually much cheaper — capture-only generation, MVV-LVA ordering alone, a
 immediately on stand-pat. Which is a reminder that nps is a property of the *mix* of node
 types, not a measure of engine quality: an engine can raise its nps by doing cheaper and less
 useful work.
+
+**Phase 1, end to end.** Same depth, 6.9% of the time, with the horizon effect fixed on
+top; and under a clock, two plies deeper at one second and nearly three at three seconds:
+
+| | nodes | seconds |
+|---|---:|---:|
+| `phase0`, depth 4 | 802,700 | 69.27 |
+| `phase1`, depth 4 | 111,401 | 4.76 |
 
 Per-step reasoning, including the per-category breakdown and a check of the result against
 the alpha-beta square-root bound, is in [DEVLOG.md](DEVLOG.md).

@@ -1092,3 +1092,185 @@ and only then written as a test.
 leaving the module in a half-patched state. It reported the failure clearly and the remaining
 edits were applied separately, but the lesson stands: a multi-step edit script that is not
 idempotent needs to say exactly which step failed, or recovery means guessing what landed.
+
+---
+
+## Phase 1, step 5 — time management
+
+**Shipped** 2026-10-10 · completes Phase 1
+
+### What
+
+`Searcher.search_timed()`: iterative deepening against a millisecond budget, with a soft
+limit that gates starting another iteration and a hard limit that aborts mid-iteration.
+`allocate_time()` turns a clock into those two budgets. [`bench/timed.py`](../bench/timed.py)
+measures depth reached per configuration at a fixed budget, which is the benchmark that makes
+every previous step mean something.
+
+Also: `CONFIGS["phase1"]`, an alias for `pvs` — everything that measured as a gain and
+nothing that did not. Aspiration windows are deliberately absent.
+
+### Why this is the step that makes the rest matter
+
+At a **fixed depth**, a score-preserving optimisation plays *identical moves* to the
+baseline — which is exactly what the differential tests enforce. So move ordering, the
+transposition table and PVS are each worth exactly **zero** at fixed depth, by construction.
+Their value exists only because the time they save buys extra depth, and nothing measured so
+far could show that.
+
+This is also why Phase 2's Elo harness has to play at a fixed time or node budget rather than
+a fixed depth. Measuring Elo at fixed depth would correctly report +0 and look like a broken
+harness.
+
+### Two limits, doing different jobs
+
+**Soft** is the target. After each completed iteration the search asks whether another would
+fit, and stops if not. Stopping cleanly between iterations is much better than being cut off
+inside one, because a completed iteration has a trustworthy *score* and a partial one does
+not.
+
+**Hard** is the ceiling that aborts mid-iteration. It exists because the prediction can be
+wrong — a position where the score suddenly swings makes an iteration far more expensive than
+its predecessor suggested.
+
+`allocate_time(remaining_ms, increment_ms, moves_to_go)` splits a clock:
+`remaining / expected_moves + 0.8 * increment` for the soft budget, with the hard budget at
+three times that and both capped at 40% of what remains. Only 80% of the increment is
+claimed, so that a consistently slight overshoot cannot drain the clock across a long game.
+`moves_to_go` is used when the time control supplies it, and 30 is assumed otherwise:
+guessing too low spends the clock early, too high leaves time unused at the end.
+
+### Aborting a recursive search, and the bug that is waiting there
+
+The hard limit is enforced by raising `SearchAborted` from deep inside the recursion. An
+exception rather than a flag checked at every return, because the search returns a score from
+four different places and a flag would have to be handled at each.
+
+**The exception skips every pending `board.pop()` on the way out.** So after an abort the
+board is sitting somewhere in the middle of a variation, several moves deep — and the *next*
+search would run on the wrong position. That is a bug that would surface as an inexplicable
+evaluation a long way from its cause.
+
+Two options. Wrap every push in `try/finally`, which puts a context manager on the hottest
+path in the engine. Or record the move-stack depth before the search and pop back to it
+afterwards, which costs nothing and is just as correct. The second, with the Zobrist key
+re-seeded from the restored position rather than unwound, since its stack is in the same
+state as the board's.
+
+`test_the_board_is_restored_after_an_abort` runs every benchmark position at a budget small
+enough to force aborts and asserts the board is byte-identical afterwards, plus that at least
+one abort actually happened so the test cannot pass vacuously.
+
+### A partial iteration is not wasted, but its score is
+
+When an iteration is cut short its **move** is kept and its **score** is discarded.
+
+The move is sound because the previous iteration's best move is ordered first (the
+transposition table supplies it), so any move that has since overtaken it is genuinely better
+at the deeper depth. The score is not sound, because a root that has examined only some of its
+moves has produced a lower bound, not a value.
+
+So `TimedResult` reports `depth` and `completed_depth` separately, and they differ by one
+when a partial iteration contributed the move. Collapsing them into a single number would
+imply the score came from the deeper search.
+
+### Three measured deficiencies, each found by looking at the numbers
+
+None of these were predicted. All three came from reading the benchmark output and asking why
+it looked wrong.
+
+**1. The clock was checked too rarely to respect the hard limit.** The first version checked
+every 2048th node, which at this engine's 25,000-30,000 nodes per second is 70-80ms. It
+overshot a 500ms hard limit by 50ms. In a real game that is how an engine loses on time.
+Tightened to every 256th node, about 10ms. The cost is negligible — `time.perf_counter()` is
+on the order of 100ns, so this is roughly 120 calls per second — while checking at *every*
+node would be measurable, since a node here costs about 35 microseconds. Worst overshoot now
+measured across the whole set at four budgets: **+26.5ms**.
+
+**2. The growth prediction banked unused clock.** The rule "start the next iteration only if
+it is predicted to fit" is the textbook one and it was quietly wasting a third of the budget.
+Dividing two very fast iterations gives a wild ratio, and with a generous clamp the prediction
+came out enormous: `tt-id` stopped at depth 3 on `italian` having spent **276ms of a 1,500ms
+budget**, while the *slower* `quiescence-see` reached depth 4 purely because its iterations
+were large enough for the growth estimate to be meaningful.
+
+That made the whole timed benchmark partly a comparison of time managers rather than of
+searches, which would have produced a wrong conclusion about quiescence. Three fixes: the
+growth factor is the **median of the last three ratios** rather than the last one; an
+iteration taking under 2% of the budget is treated as too small to predict from; and while
+less than **half** the hard budget has been spent, the next iteration is started regardless of
+the prediction. The last one is justified by the step above — an aborted iteration keeps its
+move, so being optimistic costs a score from one ply shallower while being pessimistic costs a
+whole ply.
+
+**3. The engine could in principle answer with no move at all.** With a budget smaller than
+256 nodes of work, the first clock check can fire before any root move has completed, leaving
+nothing published. A fallback now plays the first legal move. It never triggered in testing —
+a 1ms budget still returns a move, because the first root move's subtree happened to be under
+256 nodes — so the test *forces* it by making every iteration abort immediately. Returning no
+move is a forfeit; playing the first move that comes to hand is strictly better.
+
+That third point also records an honest limitation: the hard limit's granularity is 256 nodes,
+so a budget smaller than that much work cannot be honoured. A 1ms budget on a dense middlegame
+actually takes about 16ms. For the hundreds of milliseconds a real time control allows, this
+does not arise.
+
+### Measured — the headline for all of Phase 1
+
+```
+python -m bench.timed --ms 1000
+python -m bench.timed --ms 3000
+```
+
+Mean depth reached across the 13 positions, same budget for every configuration, all driven
+by the same iterative-deepening loop so that the comparison is between *searches* and not
+between time managers:
+
+| config | depth in 1s | depth in 3s |
+|---|---:|---:|
+| `phase0` (plain alpha-beta) | 3.54 | 4.15 |
+| `ordering` | 4.85 | 5.23 |
+| `tt-id` | 5.46 | 6.31 |
+| `quiescence-see` | 5.54 | 7.00 |
+| `phase1` | **5.62** | **7.08** |
+| | **+2.08 plies** | **+2.93 plies** |
+
+Median depth goes from 3 to 5 at one second and from 4 to 6 at three seconds. The gap widens
+with the budget, which is what an exponential tree predicts: the deeper you are, the more a
+constant-factor saving is worth in plies.
+
+Per-step attribution at one second: ordering **+1.31**, transposition table and iterative
+deepening **+0.62**, quiescence **+0.08**, PVS **+0.08**.
+
+Quiescence contributing almost nothing *in depth* is the correct result and worth saying out
+loud: quiescence does not buy depth, it buys accuracy at a given depth. It is roughly
+depth-neutral here because its nodes are individually much cheaper — 31,782 nodes per second
+against 15,244 for `tt-id` — so the extra nodes it visits very nearly pay for themselves. Its
+actual contribution is the 8 of 13 positions whose score it corrected and the 4 of 13 whose
+move it changed, which is a strength claim that only Phase 2 can put a number on.
+
+### Where Phase 1 ended up overall
+
+| | nodes | seconds |
+|---|---:|---:|
+| `phase0`, depth 4, fixed depth | 802,700 | 69.27 |
+| `phase1`, depth 4, fixed depth | 111,401 | 4.76 |
+
+Same depth, **6.9% of the time**, and with the horizon effect fixed on top. Under a
+one-second clock the engine sees two plies deeper than the plain baseline, and under three
+seconds, nearly three plies.
+
+### What went wrong
+
+The three deficiencies above are the story of this step, and the pattern in all three is the
+same: the feature worked on the first attempt, and the *measurement* is what showed it was
+working badly. The 2048-node check passed every test. The growth prediction passed every test.
+Neither would have been found by anything except looking at the output and asking why
+`tt-id` had used 276ms of 1,500.
+
+One smaller thing: two tests in this file were written on assumptions that turned out to be
+false — that depth 1 always completes (it does not; the abort can fire inside it, so
+`completed_depth` can be 0), and that a 200ms budget on `kiwipete` would force an abort (it
+stops cleanly via the soft gate instead). Both were rewritten to assert the invariant across
+several budgets and to require that an abort happened *somewhere*, rather than assuming one
+particular budget would produce one.

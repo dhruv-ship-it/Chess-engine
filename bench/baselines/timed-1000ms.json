@@ -1,0 +1,726 @@
+{
+  "soft_ms": 1000,
+  "hard_ms": 1500,
+  "configs": {
+    "phase0": {
+      "positions": {
+        "startpos": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 0,
+          "move": "e2e3",
+          "elapsed_ms": 1514.5845000224654,
+          "nodes": 22528,
+          "aborted": true,
+          "overshoot_ms": 14.584500022465363
+        },
+        "open-game": {
+          "depth": 3,
+          "reported_depth": 4,
+          "score": 150,
+          "move": "f1b5",
+          "elapsed_ms": 1504.7955000190996,
+          "nodes": 19712,
+          "aborted": true,
+          "overshoot_ms": 4.795500019099563
+        },
+        "italian": {
+          "depth": 3,
+          "reported_depth": 4,
+          "score": 130,
+          "move": "c4d5",
+          "elapsed_ms": 1509.13139997283,
+          "nodes": 18432,
+          "aborted": true,
+          "overshoot_ms": 9.131399972829968
+        },
+        "sicilian-open": {
+          "depth": 3,
+          "reported_depth": 4,
+          "score": 350,
+          "move": "d4b5",
+          "elapsed_ms": 1501.471199997468,
+          "nodes": 19200,
+          "aborted": true,
+          "overshoot_ms": 1.4711999974679202
+        },
+        "kiwipete": {
+          "depth": 2,
+          "reported_depth": 3,
+          "score": 70,
+          "move": "e2a6",
+          "elapsed_ms": 1502.2242000268307,
+          "nodes": 16128,
+          "aborted": true,
+          "overshoot_ms": 2.2242000268306583
+        },
+        "perft-4": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": -205,
+          "move": "d2d4",
+          "elapsed_ms": 1504.9324000137858,
+          "nodes": 18688,
+          "aborted": true,
+          "overshoot_ms": 4.932400013785809
+        },
+        "perft-5": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 560,
+          "move": "d7c8q",
+          "elapsed_ms": 928.2475999789312,
+          "nodes": 11968,
+          "aborted": false,
+          "overshoot_ms": -571.7524000210688
+        },
+        "wac-001": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 999997,
+          "move": "g3g6",
+          "elapsed_ms": 620.934499980649,
+          "nodes": 8001,
+          "aborted": false,
+          "overshoot_ms": -879.065500019351
+        },
+        "wac-002": {
+          "depth": 4,
+          "reported_depth": 4,
+          "score": -80,
+          "move": "f6e6",
+          "elapsed_ms": 857.73099999642,
+          "nodes": 14236,
+          "aborted": false,
+          "overshoot_ms": -642.26900000358
+        },
+        "hanging-queen": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 470,
+          "move": "d1d4",
+          "elapsed_ms": 1502.6905999984592,
+          "nodes": 29696,
+          "aborted": true,
+          "overshoot_ms": 2.69059999845922
+        },
+        "perft-3-endgame": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": -20,
+          "move": "b4f4",
+          "elapsed_ms": 1503.262200014433,
+          "nodes": 26624,
+          "aborted": true,
+          "overshoot_ms": 3.262200014432892
+        },
+        "kpk": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 110,
+          "move": "e1f2",
+          "elapsed_ms": 1504.6625999966636,
+          "nodes": 35072,
+          "aborted": true,
+          "overshoot_ms": 4.66259999666363
+        },
+        "rook-endgame": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 560,
+          "move": "e1d2",
+          "elapsed_ms": 1502.9394000011962,
+          "nodes": 32256,
+          "aborted": true,
+          "overshoot_ms": 2.9394000011961907
+        }
+      },
+      "totals": {
+        "mean_depth": 3.54,
+        "median_depth": 3,
+        "min_depth": 2,
+        "max_depth": 6,
+        "nodes": 272541,
+        "worst_overshoot_ms": 14.6,
+        "aborted_count": 10
+      }
+    },
+    "ordering": {
+      "positions": {
+        "startpos": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 0,
+          "move": "e2e4",
+          "elapsed_ms": 1502.2696999949403,
+          "nodes": 20480,
+          "aborted": true,
+          "overshoot_ms": 2.2696999949403107
+        },
+        "open-game": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": -50,
+          "move": "f3e5",
+          "elapsed_ms": 1500.4307000199333,
+          "nodes": 18432,
+          "aborted": true,
+          "overshoot_ms": 0.43070001993328333
+        },
+        "italian": {
+          "depth": 4,
+          "reported_depth": 4,
+          "score": -50,
+          "move": "c4b5",
+          "elapsed_ms": 1094.9317000049632,
+          "nodes": 12597,
+          "aborted": false,
+          "overshoot_ms": -405.0682999950368
+        },
+        "sicilian-open": {
+          "depth": 4,
+          "reported_depth": 4,
+          "score": 10,
+          "move": "f1b5",
+          "elapsed_ms": 787.5628999900073,
+          "nodes": 9680,
+          "aborted": false,
+          "overshoot_ms": -712.4371000099927
+        },
+        "kiwipete": {
+          "depth": 4,
+          "reported_depth": 4,
+          "score": 50,
+          "move": "e2a6",
+          "elapsed_ms": 906.3590999867301,
+          "nodes": 8751,
+          "aborted": false,
+          "overshoot_ms": -593.6409000132699
+        },
+        "perft-4": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": -615,
+          "move": "g1h1",
+          "elapsed_ms": 1526.4946999959648,
+          "nodes": 16384,
+          "aborted": true,
+          "overshoot_ms": 26.494699995964766
+        },
+        "perft-5": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 275,
+          "move": "d7c8q",
+          "elapsed_ms": 1505.107200006023,
+          "nodes": 18944,
+          "aborted": true,
+          "overshoot_ms": 5.107200006023049
+        },
+        "wac-001": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 999997,
+          "move": "g3g6",
+          "elapsed_ms": 276.82309999363497,
+          "nodes": 3582,
+          "aborted": false,
+          "overshoot_ms": -1223.176900006365
+        },
+        "wac-002": {
+          "depth": 5,
+          "reported_depth": 5,
+          "score": 140,
+          "move": "f6e6",
+          "elapsed_ms": 880.3755000117235,
+          "nodes": 14374,
+          "aborted": false,
+          "overshoot_ms": -619.6244999882765
+        },
+        "hanging-queen": {
+          "depth": 7,
+          "reported_depth": 7,
+          "score": 500,
+          "move": "d1d4",
+          "elapsed_ms": 1127.5127000117209,
+          "nodes": 22870,
+          "aborted": false,
+          "overshoot_ms": -372.4872999882791
+        },
+        "perft-3-endgame": {
+          "depth": 6,
+          "reported_depth": 6,
+          "score": -20,
+          "move": "b4f4",
+          "elapsed_ms": 1213.4427999844775,
+          "nodes": 20344,
+          "aborted": false,
+          "overshoot_ms": -286.55720001552254
+        },
+        "kpk": {
+          "depth": 8,
+          "reported_depth": 9,
+          "score": 130,
+          "move": "e1f2",
+          "elapsed_ms": 1509.1626000066753,
+          "nodes": 33536,
+          "aborted": true,
+          "overshoot_ms": 9.162600006675348
+        },
+        "rook-endgame": {
+          "depth": 6,
+          "reported_depth": 6,
+          "score": 575,
+          "move": "e1f2",
+          "elapsed_ms": 1262.8813000046648,
+          "nodes": 26049,
+          "aborted": false,
+          "overshoot_ms": -237.1186999953352
+        }
+      },
+      "totals": {
+        "mean_depth": 4.85,
+        "median_depth": 4,
+        "min_depth": 3,
+        "max_depth": 8,
+        "nodes": 226023,
+        "worst_overshoot_ms": 26.5,
+        "aborted_count": 5
+      }
+    },
+    "tt-id": {
+      "positions": {
+        "startpos": {
+          "depth": 5,
+          "reported_depth": 5,
+          "score": 70,
+          "move": "e2e4",
+          "elapsed_ms": 1228.4341000195127,
+          "nodes": 15918,
+          "aborted": false,
+          "overshoot_ms": -271.5658999804873
+        },
+        "open-game": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": -50,
+          "move": "f1b5",
+          "elapsed_ms": 1519.134700007271,
+          "nodes": 17664,
+          "aborted": true,
+          "overshoot_ms": 19.13470000727102
+        },
+        "italian": {
+          "depth": 4,
+          "reported_depth": 4,
+          "score": -50,
+          "move": "c4b5",
+          "elapsed_ms": 1513.9472999726422,
+          "nodes": 16896,
+          "aborted": true,
+          "overshoot_ms": 13.947299972642213
+        },
+        "sicilian-open": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 10,
+          "move": "f1b5",
+          "elapsed_ms": 1519.203000003472,
+          "nodes": 18176,
+          "aborted": true,
+          "overshoot_ms": 19.20300000347197
+        },
+        "kiwipete": {
+          "depth": 4,
+          "reported_depth": 4,
+          "score": 50,
+          "move": "e2a6",
+          "elapsed_ms": 933.0669000046328,
+          "nodes": 8518,
+          "aborted": false,
+          "overshoot_ms": -566.9330999953672
+        },
+        "perft-4": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": -615,
+          "move": "c4c5",
+          "elapsed_ms": 1519.501400005538,
+          "nodes": 16384,
+          "aborted": true,
+          "overshoot_ms": 19.501400005538017
+        },
+        "perft-5": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 275,
+          "move": "d7c8q",
+          "elapsed_ms": 1507.4779999849852,
+          "nodes": 18432,
+          "aborted": true,
+          "overshoot_ms": 7.4779999849852175
+        },
+        "wac-001": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 999997,
+          "move": "g3g6",
+          "elapsed_ms": 277.2850999899674,
+          "nodes": 3407,
+          "aborted": false,
+          "overshoot_ms": -1222.7149000100326
+        },
+        "wac-002": {
+          "depth": 5,
+          "reported_depth": 6,
+          "score": 140,
+          "move": "f6e6",
+          "elapsed_ms": 1505.802899977425,
+          "nodes": 24064,
+          "aborted": true,
+          "overshoot_ms": 5.802899977425113
+        },
+        "hanging-queen": {
+          "depth": 8,
+          "reported_depth": 8,
+          "score": 510,
+          "move": "d1d4",
+          "elapsed_ms": 1503.3081000146922,
+          "nodes": 36608,
+          "aborted": true,
+          "overshoot_ms": 3.3081000146921724
+        },
+        "perft-3-endgame": {
+          "depth": 6,
+          "reported_depth": 6,
+          "score": -20,
+          "move": "b4f4",
+          "elapsed_ms": 789.9317999836057,
+          "nodes": 12900,
+          "aborted": false,
+          "overshoot_ms": -710.0682000163943
+        },
+        "kpk": {
+          "depth": 14,
+          "reported_depth": 14,
+          "score": 140,
+          "move": "e1f2",
+          "elapsed_ms": 1421.336000028532,
+          "nodes": 41822,
+          "aborted": false,
+          "overshoot_ms": -78.663999971468
+        },
+        "rook-endgame": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 580,
+          "move": "e2e3",
+          "elapsed_ms": 1501.986199989915,
+          "nodes": 33536,
+          "aborted": true,
+          "overshoot_ms": 1.986199989914894
+        }
+      },
+      "totals": {
+        "mean_depth": 5.46,
+        "median_depth": 4,
+        "min_depth": 3,
+        "max_depth": 14,
+        "nodes": 264325,
+        "worst_overshoot_ms": 19.5,
+        "aborted_count": 8
+      }
+    },
+    "quiescence-see": {
+      "positions": {
+        "startpos": {
+          "depth": 5,
+          "reported_depth": 6,
+          "score": 40,
+          "move": "g1f3",
+          "elapsed_ms": 1507.8527000150643,
+          "nodes": 48128,
+          "aborted": true,
+          "overshoot_ms": 7.852700015064329
+        },
+        "open-game": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 0,
+          "move": "d2d4",
+          "elapsed_ms": 1504.5743000227958,
+          "nodes": 41472,
+          "aborted": true,
+          "overshoot_ms": 4.574300022795796
+        },
+        "italian": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 0,
+          "move": "e1g1",
+          "elapsed_ms": 1505.5948999943212,
+          "nodes": 37120,
+          "aborted": true,
+          "overshoot_ms": 5.5948999943211675
+        },
+        "sicilian-open": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 40,
+          "move": "f1b5",
+          "elapsed_ms": 1501.1242000036873,
+          "nodes": 51456,
+          "aborted": true,
+          "overshoot_ms": 1.1242000036872923
+        },
+        "kiwipete": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 45,
+          "move": "e2a6",
+          "elapsed_ms": 768.4408999921288,
+          "nodes": 15447,
+          "aborted": false,
+          "overshoot_ms": -731.5591000078712
+        },
+        "perft-4": {
+          "depth": 5,
+          "reported_depth": 5,
+          "score": -475,
+          "move": "c4c5",
+          "elapsed_ms": 1252.3189000203274,
+          "nodes": 30789,
+          "aborted": false,
+          "overshoot_ms": -247.68109997967258
+        },
+        "perft-5": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 515,
+          "move": "d7c8q",
+          "elapsed_ms": 1503.8320000167005,
+          "nodes": 52992,
+          "aborted": true,
+          "overshoot_ms": 3.8320000167004764
+        },
+        "wac-001": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 999997,
+          "move": "g3g6",
+          "elapsed_ms": 356.8486000003759,
+          "nodes": 10299,
+          "aborted": false,
+          "overshoot_ms": -1143.1513999996241
+        },
+        "wac-002": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 50,
+          "move": "c4c3",
+          "elapsed_ms": 1503.582200006349,
+          "nodes": 53504,
+          "aborted": true,
+          "overshoot_ms": 3.5822000063490123
+        },
+        "hanging-queen": {
+          "depth": 8,
+          "reported_depth": 8,
+          "score": 510,
+          "move": "d1d4",
+          "elapsed_ms": 1504.0263000119012,
+          "nodes": 70912,
+          "aborted": true,
+          "overshoot_ms": 4.026300011901185
+        },
+        "perft-3-endgame": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 35,
+          "move": "b4f4",
+          "elapsed_ms": 1501.3569000002462,
+          "nodes": 56320,
+          "aborted": true,
+          "overshoot_ms": 1.3569000002462417
+        },
+        "kpk": {
+          "depth": 14,
+          "reported_depth": 14,
+          "score": 140,
+          "move": "e1f2",
+          "elapsed_ms": 1118.6637000064366,
+          "nodes": 45528,
+          "aborted": false,
+          "overshoot_ms": -381.33629999356344
+        },
+        "rook-endgame": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 590,
+          "move": "e1d2",
+          "elapsed_ms": 1500.3789000038523,
+          "nodes": 71424,
+          "aborted": true,
+          "overshoot_ms": 0.3789000038523227
+        }
+      },
+      "totals": {
+        "mean_depth": 5.54,
+        "median_depth": 5,
+        "min_depth": 3,
+        "max_depth": 14,
+        "nodes": 585391,
+        "worst_overshoot_ms": 7.9,
+        "aborted_count": 9
+      }
+    },
+    "phase1": {
+      "positions": {
+        "startpos": {
+          "depth": 5,
+          "reported_depth": 6,
+          "score": 40,
+          "move": "g1f3",
+          "elapsed_ms": 1510.9586000035051,
+          "nodes": 47872,
+          "aborted": true,
+          "overshoot_ms": 10.958600003505126
+        },
+        "open-game": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 0,
+          "move": "d2d4",
+          "elapsed_ms": 1501.1715999862645,
+          "nodes": 43776,
+          "aborted": true,
+          "overshoot_ms": 1.1715999862644821
+        },
+        "italian": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 0,
+          "move": "e1g1",
+          "elapsed_ms": 1506.1438999837264,
+          "nodes": 39936,
+          "aborted": true,
+          "overshoot_ms": 6.143899983726442
+        },
+        "sicilian-open": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 40,
+          "move": "f1b5",
+          "elapsed_ms": 1500.7048000115901,
+          "nodes": 52480,
+          "aborted": true,
+          "overshoot_ms": 0.7048000115901232
+        },
+        "kiwipete": {
+          "depth": 3,
+          "reported_depth": 4,
+          "score": 45,
+          "move": "e2a6",
+          "elapsed_ms": 1501.7030999879353,
+          "nodes": 29696,
+          "aborted": true,
+          "overshoot_ms": 1.7030999879352748
+        },
+        "perft-4": {
+          "depth": 5,
+          "reported_depth": 5,
+          "score": -475,
+          "move": "c4c5",
+          "elapsed_ms": 1284.69070000574,
+          "nodes": 30882,
+          "aborted": false,
+          "overshoot_ms": -215.30929999426007
+        },
+        "perft-5": {
+          "depth": 4,
+          "reported_depth": 5,
+          "score": 515,
+          "move": "d7c8q",
+          "elapsed_ms": 1501.0356999991927,
+          "nodes": 53504,
+          "aborted": true,
+          "overshoot_ms": 1.0356999991927296
+        },
+        "wac-001": {
+          "depth": 3,
+          "reported_depth": 3,
+          "score": 999997,
+          "move": "g3g6",
+          "elapsed_ms": 367.32310001389123,
+          "nodes": 10731,
+          "aborted": false,
+          "overshoot_ms": -1132.6768999861088
+        },
+        "wac-002": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 50,
+          "move": "c4c3",
+          "elapsed_ms": 1500.9426999895368,
+          "nodes": 54016,
+          "aborted": true,
+          "overshoot_ms": 0.9426999895367771
+        },
+        "hanging-queen": {
+          "depth": 8,
+          "reported_depth": 8,
+          "score": 510,
+          "move": "d1d4",
+          "elapsed_ms": 1500.303899985738,
+          "nodes": 69376,
+          "aborted": true,
+          "overshoot_ms": 0.3038999857380986
+        },
+        "perft-3-endgame": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 35,
+          "move": "b4f4",
+          "elapsed_ms": 1500.6806000019424,
+          "nodes": 56832,
+          "aborted": true,
+          "overshoot_ms": 0.6806000019423664
+        },
+        "kpk": {
+          "depth": 15,
+          "reported_depth": 15,
+          "score": 155,
+          "move": "e1f2",
+          "elapsed_ms": 1153.0210999771953,
+          "nodes": 46851,
+          "aborted": false,
+          "overshoot_ms": -346.97890002280474
+        },
+        "rook-endgame": {
+          "depth": 6,
+          "reported_depth": 7,
+          "score": 575,
+          "move": "e1d2",
+          "elapsed_ms": 1501.5637000033166,
+          "nodes": 69632,
+          "aborted": true,
+          "overshoot_ms": 1.563700003316626
+        }
+      },
+      "totals": {
+        "mean_depth": 5.62,
+        "median_depth": 5,
+        "min_depth": 3,
+        "max_depth": 15,
+        "nodes": 605584,
+        "worst_overshoot_ms": 11.0,
+        "aborted_count": 10
+      }
+    }
+  },
+  "environment": {
+    "python": "3.11.4",
+    "python_chess": "1.11.2",
+    "platform": "Windows-10-10.0.26200-SP0"
+  }
+}
