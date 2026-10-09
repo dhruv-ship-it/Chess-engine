@@ -248,3 +248,188 @@ The second half of the correction: **Elo has to be measured at fixed time or a f
 budget per move, never at fixed depth.** At fixed depth a score-preserving optimisation plays
 *identical moves* and is therefore worth exactly 0 Elo by construction. The gain only exists
 when the time saved is spent on extra depth. Phase 2 is designed around that.
+
+---
+
+## Phase 1, step 1 — move ordering
+
+**Shipped** 2026-10-10
+
+### What
+
+[`engine/ordering.py`](../engine/ordering.py): MVV-LVA for captures and promotions, two
+killer-move slots per ply, and a per-colour history table. Enabled by
+`SearchConfig(move_ordering=True)`, registered as the `ordering` config.
+
+### Why ordering is the first optimisation
+
+Alpha-beta's whole saving comes from finding a cutoff *early*. If the best move at a node is
+searched first, the subtrees under every remaining move get pruned; if it is searched last,
+nothing is pruned and the search degenerates to full minimax. Identical answer, wildly
+different cost. With perfect ordering alpha-beta visits roughly the square root of the
+minimax tree — about double the depth for the same work.
+
+So ordering is not a constant-factor tweak. It changes the effective branching factor, and
+the branching factor sits in the exponent. Everything else in Phase 1 either depends on
+ordering already being good (PVS assumes the first move is usually best) or improves it (the
+transposition table's main practical value is supplying a known-good first move). It goes
+first for both reasons.
+
+### The three heuristics, and why all three
+
+They are complementary — one static, one ply-local, one global — and each covers a case the
+others cannot.
+
+**MVV-LVA**, static, for captures: sort by victim value descending, then attacker value
+ascending. Pawn takes queen is the best thing to try first; queen takes pawn is the worst
+capture to lead with, because it is the one most likely to simply lose the queen.
+
+One detail worth the comment it has in the code: the attacker term is an **ordinal rank**
+(pawn 1 to king 6), not a centipawn value. The king is worth 20,000 in the evaluation so
+that material can never outweigh it, and reusing that number as the attacker term would
+swamp the victim term and rank king-takes-queen *below* pawn-takes-pawn. There is a test
+named for exactly that inversion, because it is the kind of bug that leaves a working engine
+which is merely slower, and no correctness test would notice.
+
+**Killer moves**, ply-local, for quiet moves: a quiet move that caused a beta cutoff at the
+same ply in a *sibling* subtree very often causes one here too, because siblings differ by
+one move and are nearly identical positions. Two slots per ply, with the old primary shifted
+down rather than overwritten, because in many positions the cutoff move alternates between
+two candidates. Stored per ply rather than globally because sibling similarity is a ply-local
+property — a killer from a different depth describes a different position.
+
+**History**, global, for everything left over: a per-colour from/to counter incremented by
+`depth * depth` on each quiet-move cutoff. The squaring is a heuristic weight, not a derived
+quantity — a cutoff near the root prunes an exponentially larger subtree than one near the
+leaves, so it is much stronger evidence about the move. The table is split by colour because
+the same from and to squares mean something different for the other side; the position is
+upside down.
+
+Only quiet moves feed the killer and history tables. Captures are already ordered by
+MVV-LVA, so a killer slot spent on one is a wasted slot.
+
+### Priority bands, and the one non-obvious mechanism
+
+Captures occupy a numeric band strictly above killers, which sit strictly above history
+scores. The band separation has to be *maintained*, not merely chosen, because history
+counters only ever grow: given a long enough search they would climb into the killer band
+and invert the ordering. So the whole history table is halved whenever any entry reaches a
+ceiling.
+
+That single mechanism does two jobs. It preserves the band ordering, and it **ages** the
+table, so evidence from early in a long search decays instead of permanently dominating. It
+is the sort of thing that looks like an arbitrary magic number until you ask what happens
+after ten million nodes.
+
+### Measured
+
+```
+python -m bench.nodes --config ordering --depth 4 --baseline bench/baselines/phase0-d4.json
+```
+
+| position | category | phase0 nodes | ordered nodes | change | score |
+|---|---|---:|---:|---:|---|
+| startpos | opening | 3,154 | 2,165 | -31.4% | same |
+| open-game | opening | 26,325 | 5,682 | -78.4% | same |
+| italian | opening | 39,673 | 9,848 | -75.2% | same |
+| sicilian-open | opening | 65,124 | 9,171 | -85.9% | same |
+| kiwipete | middlegame | 355,718 | 6,267 | **-98.2%** | same |
+| perft-4 | middlegame | 76,986 | 4,318 | -94.4% | same |
+| perft-5 | middlegame | 148,311 | 3,699 | -97.5% | same |
+| wac-001 | tactical | 63,344 | 7,538 | -88.1% | same |
+| wac-002 | tactical | 12,451 | 2,230 | -82.1% | same |
+| hanging-queen | tactical | 4,681 | 252 | -94.6% | same |
+| perft-3-endgame | endgame | 4,190 | 1,307 | -68.8% | same |
+| kpk | endgame | 565 | 246 | -56.5% | same |
+| rook-endgame | endgame | 2,178 | 1,131 | **-48.1%** | same |
+| **total** | | **802,700** | **53,854** | **-93.3%** | |
+| time | | 69.27s | 4.36s | -93.7% | |
+
+**All 13 scores identical, all 13 best moves identical.** That is the gate, and it held
+without exception. Ordering is provably score-preserving — reordering siblings cannot change
+a minimax value — so anything else here would have been a bug.
+
+### Which number to quote, and why not the aggregate
+
+The aggregate is **-93.3%**. The honest headline is the **median per-position reduction,
+-82.1%**, with a range of -31% to -98%.
+
+The reason is in the baseline table: `kiwipete` alone was 44% of the baseline's total nodes,
+and ordering happens to help it most (-98.2%), so it drags the aggregate well above what a
+typical position sees. Quoting -93.3% is not false, but it is a number about one position
+wearing the clothes of a number about the engine. That is the same failure the predecessor
+project made in a smaller way — a 69% figure from one hardcoded FEN — so both numbers are
+reported here and the median is the one that gets quoted.
+
+The spread itself is informative rather than noise:
+
+* `kiwipete`, `perft-4` and `perft-5` (-94% to -98%) are dense middlegames full of captures.
+  MVV-LVA has the most to work with and the unordered baseline had the most to lose.
+* `rook-endgame` and `kpk` (-48%, -57%) have few pieces and almost no captures, so MVV-LVA
+  contributes nothing and the whole gain comes from killers and history.
+* `startpos` (-31%) is the weakest case: no captures available at all, and a symmetric
+  position where few moves are clearly better than the rest, so there is little signal for
+  any of the three heuristics to find.
+
+### Sanity-checking the magnitude
+
+A 57-fold reduction on one position deserves suspicion rather than celebration, so it is
+worth checking against theory. `kiwipete` has 48 legal moves at the root. Full minimax at
+depth 4 is about 48^4, roughly 5.3M nodes; the best case for alpha-beta is approximately its
+square root, around 2 * 48^2, roughly 4,600. The unordered baseline searched 355,718 — far
+above that floor, exactly as expected with arbitrary move order. The ordered search finds
+6,267, which is close to it. So the result is not too good to be true; it is ordering doing
+what the square-root bound says it should, on the position most able to benefit.
+
+### What also moved, slightly unexpectedly
+
+Nodes per second went *up* (11,588 to 12,348) despite now sorting every move list. The
+reason is visible in the leaf column: leaves were 92.6% of all nodes in the baseline and are
+68.6% now. Ordering prunes leaf-heavy subtrees preferentially, so the surviving tree has a
+higher proportion of internal nodes, and an internal node does not pay for a static
+evaluation. The sort overhead is real, but it is smaller than the evaluation work it
+displaces.
+
+That also sets up the next constant-factor win. `order_moves` sorts the whole move list,
+while most nodes cut off after one or two moves. Real engines stage this — yield the
+transposition-table move, then captures, then quiet moves, stopping as soon as a cutoff
+happens. Deliberately not done yet: this step's job was the node reduction, and a staged
+generator is easier to justify and to measure once there is a transposition-table move to
+stage first.
+
+### The number that actually matters: effective depth
+
+A node-count reduction is an activity metric. The result metric is how deep the engine can
+see for a given amount of work, because that is what converts into playing strength. So the
+same benchmark was run one ply deeper:
+
+```
+python -m bench.nodes --config ordering --depth 5
+```
+
+| | nodes | seconds |
+|---|---:|---:|
+| phase0, depth 4 | 802,700 | 69.27 |
+| ordering, depth 5 | 679,433 | 55.02 |
+| | **-15.4%** | **-20.6%** |
+
+Move ordering reaches **depth 5 using 15% fewer nodes and 21% less wall-clock time than the
+unordered baseline needed for depth 4.** That is a full extra ply of search for less work
+than the shallower search cost — which is the square-root bound showing up as something you
+can feel, and a far better description of the change than "-93% nodes".
+
+It is also the right framing for Phase 2. At a fixed depth, move ordering plays *identical
+moves* and is therefore worth exactly 0 Elo by construction. The strength gain exists only
+because the saved time buys the extra ply, which is why Elo has to be measured under a time
+budget rather than a depth limit.
+
+### What went wrong
+
+Nothing in the engine. One self-inflicted wound in the test suite, worth recording because
+the failure mode was instructive: `test_history_ages_at_the_ceiling` was written as a `while`
+loop that recorded cutoffs until the score stopped rising, and it hung forever. Halving a
+counter that has just crossed the ceiling lands it back exactly on the loop's own exit
+threshold, so the condition never became false. Rewritten to drive an exact number of
+records and assert the halving directly. The lesson is small but general: a test that loops
+until a condition on the system under test is a test that can hang when the system behaves
+correctly.

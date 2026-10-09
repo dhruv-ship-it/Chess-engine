@@ -4,12 +4,17 @@ This is the end-to-end strength check: each position has one clearly best move t
 correct engine must find at shallow depth. It is the suite the predecessor engine scored
 5/12 on after its "optimisations", against 12/12 before them, so it is kept as the gate that
 every future search change has to pass.
+
+Every test here runs against **every** search configuration, via the `search_fn` fixture in
+`conftest.py` -- the frozen Phase 0 function plus each entry in `engine.searcher.CONFIGS`.
+That is deliberate: the predecessor's regression was invisible precisely because its tests
+(there were none, but the principle holds) would have covered one code path while the
+optimised path diverged. Adding a feature to `CONFIGS` therefore subscribes it to this suite
+automatically, with no test edit required.
 """
 
 import chess
 import pytest
-
-from engine.search import search
 
 # (fen, best move in UCI, description)
 FREE_MATERIAL = [
@@ -32,8 +37,8 @@ MATES_IN_ONE = [
     FREE_MATERIAL,
     ids=[d for _, _, d in FREE_MATERIAL],
 )
-def test_wins_free_material(fen, expected, description, depth):
-    result = search(chess.Board(fen), depth)
+def test_wins_free_material(fen, expected, description, depth, search_fn):
+    result = search_fn(chess.Board(fen), depth)
     assert result.move is not None, description
     assert result.move.uci() == expected, (
         f"{description}: at depth {depth} played {result.move.uci()}, expected {expected}"
@@ -46,9 +51,9 @@ def test_wins_free_material(fen, expected, description, depth):
     MATES_IN_ONE,
     ids=[d for _, _, d in MATES_IN_ONE],
 )
-def test_delivers_mate_in_one(fen, expected, description, depth):
+def test_delivers_mate_in_one(fen, expected, description, depth, search_fn):
     board = chess.Board(fen)
-    result = search(board, depth)
+    result = search_fn(board, depth)
     assert result.move is not None, description
     board.push(result.move)
     assert board.is_checkmate(), (
@@ -58,10 +63,10 @@ def test_delivers_mate_in_one(fen, expected, description, depth):
 
 
 @pytest.mark.parametrize("depth", [2, 3])
-def test_takes_a_free_piece_rather_than_a_quiet_move(depth):
+def test_takes_a_free_piece_rather_than_a_quiet_move(depth, search_fn):
     """A hanging knight with no compensation; the capture must be chosen."""
     board = chess.Board("4k3/8/8/8/5n2/8/8/4KR2 w - - 0 1")
-    result = search(board, depth)
+    result = search_fn(board, depth)
     assert result.move is not None
     assert board.is_capture(result.move), (
         f"at depth {depth} played the quiet move {result.move.uci()} "
@@ -69,16 +74,16 @@ def test_takes_a_free_piece_rather_than_a_quiet_move(depth):
     )
 
 
-def test_does_not_throw_away_material():
+def test_does_not_throw_away_material(search_fn):
     """From the starting position the engine must not lose material in one move."""
     from engine.evaluate import evaluate_white
 
     board = chess.Board()
     before = evaluate_white(board)
-    result = search(board, 3)
+    result = search_fn(board, 3)
     board.push(result.move)
     # After our move it is the opponent's turn; their best reply should not win material.
-    reply = search(board, 2)
+    reply = search_fn(board, 2)
     board.push(reply.move)
     after = evaluate_white(board)
     assert after >= before - 100, (

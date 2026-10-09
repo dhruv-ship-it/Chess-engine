@@ -39,6 +39,7 @@ from dataclasses import dataclass, replace
 import chess
 
 from engine.evaluate import evaluate
+from engine.ordering import HistoryTable, KillerTable, captured_value, order_moves
 from engine.search import (
     INFINITY,
     MATE,
@@ -69,6 +70,8 @@ class SearchConfig:
 CONFIGS: dict[str, SearchConfig] = {
     # Everything off. Required by test to match engine/search.py exactly.
     "phase0": SearchConfig(),
+    # Phase 1 step 1.
+    "ordering": SearchConfig(move_ordering=True),
 }
 
 
@@ -86,6 +89,11 @@ class Searcher:
     def __init__(self, config: SearchConfig | None = None) -> None:
         self.config = config if config is not None else SearchConfig()
         self.stats = SearchStats()
+
+        # Ordering state. Allocated unconditionally -- they are small and allocating them
+        # lazily would mean a branch on every node to check whether they exist.
+        self.killers = KillerTable()
+        self.history = HistoryTable()
 
     # -- internals ---------------------------------------------------------------------
 
@@ -123,6 +131,9 @@ class Searcher:
             self.stats.leaves += 1
             return evaluate(board)
 
+        if self.config.move_ordering:
+            moves = order_moves(board, moves, self.killers, self.history, ply)
+
         best = -INFINITY
         for move in moves:
             board.push(move)
@@ -134,6 +145,13 @@ class Searcher:
             if best > alpha:
                 alpha = best
             if alpha >= beta:
+                # Beta cutoff. Credit the move that caused it, so that the next sibling
+                # subtree tries it early -- this is the feedback loop that makes killers and
+                # history work at all. Only quiet moves are credited: captures are already
+                # ordered first by MVV-LVA, so a killer slot spent on one is wasted.
+                if self.config.move_ordering and not captured_value(board, move):
+                    self.killers.record(ply, move)
+                    self.history.record(board.turn, move, depth)
                 break
 
         return best
@@ -150,6 +168,12 @@ class Searcher:
         if not moves:
             score = -MATE if board.is_check() else 0
             return SearchResult(move=None, score=score, depth=depth, stats=self.stats)
+
+        if self.config.move_ordering:
+            # The root is ordered too. It is one node out of hundreds of thousands, but it
+            # is the node where getting the first move right prunes the most, so it is the
+            # single highest-value place to order.
+            moves = order_moves(board, moves, self.killers, self.history, 0)
 
         alpha = -INFINITY
         best_move = moves[0]
@@ -175,9 +199,11 @@ class Searcher:
     def new_game(self) -> None:
         """Clear everything carried between searches.
 
-        Nothing to clear yet; killer moves, history and the transposition table hook in
-        here as they land. It exists now so that callers (benchmarks, the future Elo
-        harness) are written against it from the start rather than being retrofitted and
-        accidentally sharing state across games.
+        Callers that benchmark or play games must use this, because shared ordering state
+        makes results unattributable: the predecessor engine's benchmark ran its unordered
+        baseline and its ordered run in one process without clearing killer moves, so the
+        baseline silently warmed up the run it was being compared against.
         """
         self.reset_stats()
+        self.killers.clear()
+        self.history.clear()

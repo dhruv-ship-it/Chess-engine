@@ -1,0 +1,147 @@
+{
+  "config": "ordering",
+  "depth": 5,
+  "positions": {
+    "startpos": {
+      "nodes": 22148,
+      "leaves": 18759,
+      "seconds": 1.5719115000101738,
+      "nodes_per_sec": 14089.851750468555,
+      "score": 70,
+      "move": "e2e4",
+      "category": "opening",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    },
+    "open-game": {
+      "nodes": 55849,
+      "leaves": 46674,
+      "seconds": 4.406272099993657,
+      "nodes_per_sec": 12674.88678243007,
+      "score": 150,
+      "move": "b1c3",
+      "category": "opening",
+      "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 4 3"
+    },
+    "italian": {
+      "nodes": 131591,
+      "leaves": 115777,
+      "seconds": 11.355998199986061,
+      "nodes_per_sec": 11587.79683499435,
+      "score": 175,
+      "move": "f3g5",
+      "category": "opening",
+      "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 6 5"
+    },
+    "sicilian-open": {
+      "nodes": 131666,
+      "leaves": 120131,
+      "seconds": 10.211930599994957,
+      "nodes_per_sec": 12893.350450312011,
+      "score": 230,
+      "move": "d1f3",
+      "category": "opening",
+      "fen": "rnbqkb1r/pp2pppp/3p1n2/8/3NP3/8/PPP2PPP/RNBQKB1R w KQkq - 0 5"
+    },
+    "kiwipete": {
+      "nodes": 83154,
+      "leaves": 74657,
+      "seconds": 8.309384799998952,
+      "nodes_per_sec": 10007.239043738893,
+      "score": 315,
+      "move": "d5e6",
+      "category": "middlegame",
+      "fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"
+    },
+    "perft-4": {
+      "nodes": 16782,
+      "leaves": 11798,
+      "seconds": 1.583867299981648,
+      "nodes_per_sec": 10595.58461759672,
+      "score": -250,
+      "move": "c4c5",
+      "category": "middlegame",
+      "fen": "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"
+    },
+    "perft-5": {
+      "nodes": 66541,
+      "leaves": 62598,
+      "seconds": 5.081655200017849,
+      "nodes_per_sec": 13094.355555600521,
+      "score": 565,
+      "move": "d7c8q",
+      "category": "middlegame",
+      "fen": "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8"
+    },
+    "wac-001": {
+      "nodes": 137072,
+      "leaves": 126681,
+      "seconds": 10.613375999993877,
+      "nodes_per_sec": 12915.023457199582,
+      "score": 999997,
+      "move": "g3g6",
+      "category": "tactical",
+      "fen": "2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - 0 1"
+    },
+    "wac-002": {
+      "nodes": 14091,
+      "leaves": 11798,
+      "seconds": 0.8199382000020705,
+      "nodes_per_sec": 17185.441536891947,
+      "score": 140,
+      "move": "f6e6",
+      "category": "tactical",
+      "fen": "8/7p/5k2/5p2/p1p2P2/Pr1pPK2/1P1R3P/8 b - - 0 1"
+    },
+    "hanging-queen": {
+      "nodes": 1399,
+      "leaves": 1198,
+      "seconds": 0.06682810001075268,
+      "nodes_per_sec": 20934.307570840712,
+      "score": 500,
+      "move": "d1d4",
+      "category": "tactical",
+      "fen": "4k3/8/8/8/3q4/8/8/3RK3 w - - 0 1"
+    },
+    "perft-3-endgame": {
+      "nodes": 7929,
+      "leaves": 6646,
+      "seconds": 0.4690004999865778,
+      "nodes_per_sec": 16906.165345723337,
+      "score": 90,
+      "move": "b4f4",
+      "category": "endgame",
+      "fen": "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"
+    },
+    "kpk": {
+      "nodes": 822,
+      "leaves": 605,
+      "seconds": 0.036363599996548146,
+      "nodes_per_sec": 22605.022607168412,
+      "score": 120,
+      "move": "e1f2",
+      "category": "endgame",
+      "fen": "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1"
+    },
+    "rook-endgame": {
+      "nodes": 10389,
+      "leaves": 9215,
+      "seconds": 0.49772980000125244,
+      "nodes_per_sec": 20872.77072816186,
+      "score": 580,
+      "move": "e1d2",
+      "category": "endgame",
+      "fen": "8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1"
+    }
+  },
+  "totals": {
+    "nodes": 679433,
+    "leaves": 606537,
+    "seconds": 55.02425589997438,
+    "nodes_per_sec": 12347.881654866984
+  },
+  "environment": {
+    "python": "3.11.4",
+    "python_chess": "1.11.2",
+    "platform": "Windows-10-10.0.26200-SP0"
+  }
+}
