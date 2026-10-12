@@ -21,13 +21,18 @@ optimisation is **measured** rather than assumed.
 
 Current measurements, all reproducible with the commands below:
 
-- **268 tests passing**, covering evaluation symmetry, mate scoring, alpha-beta soundness,
+- **862 tests passing**, covering evaluation symmetry, mate scoring, alpha-beta soundness,
   per-feature differential tests, and a tactical regression suite that runs against every
   search configuration.
-- **Tactical suite: 12/12** on free-material and mate-in-N positions across depths 2–4, on
-  every configuration.
-- **Perft: 15/15** reference positions correct, ~660k nodes/sec aggregate on the make/unmake
-  path.
+- **Tactical suite: 312/312.** Nine positions — free material, mate-in-one, and a
+  don't-throw-away-material check from the opening — across depths 1–4 make 24 cases, and
+  each case runs against all 13 registered search implementations: the frozen Phase 0 search
+  plus every entry in `CONFIGS`. Adding a configuration subscribes it to the suite with no
+  test edit, which is the point.
+- **Perft: 15/15** reference checks correct — five reference positions at depths 1–3,
+  185,934 nodes, matching the published counts exactly. Throughput on the make/unmake path
+  was ~660k nodes/sec aggregate on the machine it was recorded on; that figure is
+  hardware- and load-dependent and will vary on yours, while the node counts will not.
 - **Move ordering: −82.1% median nodes per position** at depth 4 over a 13-position set
   (−93.3% aggregate), with the score and best move unchanged on every position.
 - **Transposition table: a further −24.0% median** at depth 5, rising to −32.3% with
@@ -71,6 +76,7 @@ bench/timed.py       depth reached within a fixed time budget, per configuration
 bench/positions.py   the 13-position benchmark set, validated at import
 bench/nodes.py       fixed-depth node/time benchmark, JSON baselines, comparison mode
 bench/perft.py       node-count reference suite and make/unmake throughput benchmark
+bench/summary.py     regenerates the results table from the committed baselines
 tests/               invariants, differentials, tactical regressions, harness tests
 docs/ENGINEERING.md  technical deep-dive: algorithms, methodology, results
 docs/DEVLOG.md       one entry per shipped step: what, why, measured, what went wrong
@@ -103,10 +109,25 @@ in one. This was caught by a failing test rather than by reasoning.
 
 ## Running it
 
-```bash
-pip install -r requirements.txt
+**Requires Python 3.11 or newer** (CI runs 3.11, 3.12 and 3.13). The only runtime dependency
+is `python-chess`; `pytest` is needed for the test suite.
 
-python -m pytest                      # full test suite
+```bash
+git clone https://github.com/dhruv-ship-it/Chess-engine
+cd Chess-engine
+
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+pip install -r requirements.txt
+```
+
+Everything below is run from the repository root, since the benchmarks are module entry
+points (`python -m bench.x`) rather than scripts.
+
+```bash
+python -m pytest                      # full test suite, ~3 minutes (862 tests)
+python -m pytest tests/test_tactics.py -q   # just the tactical gate, ~10 seconds
 python -m bench.perft --depth 3       # node-count suite + throughput
 python -m bench.perft --fen "<FEN>" --depth 4 --divide
 
@@ -119,7 +140,15 @@ python -m bench.nodes --config tt-id --depth 5 --baseline bench/baselines/orderi
 
 # depth reached in a fixed time budget -- the measurement that makes the rest mean anything
 python -m bench.timed --ms 1000
+
+# regenerate the cumulative results table from the committed baselines, rather than
+# retyping numbers into the docs by hand
+python -m bench.summary --depth 4 --markdown
 ```
+
+There is **no UCI interface or GUI yet** — that is Phase 3 — so the engine cannot be
+plugged into Arena or Lichess at the moment. The way to get a move out of it today is the
+Python API below.
 
 Configurations are `phase0`, `ordering`, `tt-move-only`, `tt`, `tt-id`, `id-only`,
 `quiescence`, `quiescence-see`, `pvs-pure`, `pvs` and `pvs-asp`. `phase1` is an alias for

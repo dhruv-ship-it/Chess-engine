@@ -855,8 +855,8 @@ python -m bench.nodes --config phase0 --depth 4
 
 | | result |
 |---|---|
-| tests | 859 passing |
-| tactical suite | 12/12 across depths 2-4, on every configuration |
+| tests | 862 passing |
+| tactical suite | 312/312 -- 24 cases (9 positions, depths 1-4) against each of the 13 registered search implementations |
 | perft references | 15/15 correct, ~660k nodes/sec aggregate |
 | incremental Zobrist | 7,037,881 nodes checked at depth 4, 0 inconsistent keys |
 | depth-4 search, 13 positions | 802,700 nodes / 69.3s / 11,588 nps |
